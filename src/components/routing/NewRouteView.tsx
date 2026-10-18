@@ -16,6 +16,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { BalanceteSelectorPopover } from './BalanceteSelectorPopover';
+import { DocumentosSelectorPopover } from './DocumentosSelectorPopover';
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 
@@ -85,6 +86,7 @@ export const NewRouteView: React.FC = () => {
   const [observacaoTexto, setObservacaoTexto] = useState<string>('');
   const [salvarParaProximas, setSalvarParaProximas] = useState<boolean>(true);
   const [isBalanceteOpen, setIsBalanceteOpen] = useState<boolean>(false);
+  const [isDocumentosOpen, setIsDocumentosOpen] = useState<boolean>(false);
 
   // Alertas de feedback
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
@@ -274,6 +276,7 @@ export const NewRouteView: React.FC = () => {
     setCoordenadasSelecionadas(null);
     setPontoPreview(null);
     setIsBalanceteOpen(false);
+    setIsDocumentosOpen(false);
     const labelTipo = tipoTarefa === 'coleta' ? 'Coleta' : tipoTarefa === 'outros' ? (nova.descricaoOutro || 'Outro serviço') : 'Entrega';
     setMensagemSucesso(`${labelTipo} para ${nova.destinatario} geolocalizada e adicionada à rota!`);
     setTimeout(() => setMensagemSucesso(null), 4000);
@@ -294,6 +297,15 @@ export const NewRouteView: React.FC = () => {
 
   const handleSelectBalancete = (mesAno: string) => {
     const texto = `Balancete referente ao ${mesAno.toLowerCase()}`;
+    setObservacaoTexto(prev => {
+      if (!prev) return texto;
+      if (prev.includes(texto)) return prev;
+      return `${prev}. ${texto}`;
+    });
+  };
+
+  const handleSelectDocumento = (nomeDocumento: string) => {
+    const texto = `Entrega de documento: ${nomeDocumento}`;
     setObservacaoTexto(prev => {
       if (!prev) return texto;
       if (prev.includes(texto)) return prev;
@@ -647,12 +659,51 @@ export const NewRouteView: React.FC = () => {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     {CHIPS_OBSERVACOES.map((chip, i) => {
+                      if (chip === 'Documentos') {
+                        return (
+                          <div key={i} className="relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsDocumentosOpen(prev => !prev);
+                                setIsBalanceteOpen(false);
+                              }}
+                              className={`h-[30px] px-3 rounded-full border text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                isDocumentosOpen
+                                  ? 'bg-blue-50 border-[#1D4ED8] text-[#1D4ED8] ring-2 ring-[#1D4ED8]/20 shadow-xs'
+                                  : 'border-[#D5DCE5] bg-white text-[#2B3A4F] hover:bg-slate-50'
+                              }`}
+                            >
+                              <span>+ Documentos</span>
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
+                                  isDocumentosOpen ? 'rotate-180 text-[#1D4ED8]' : ''
+                                }`}
+                              />
+                            </button>
+
+                            {isDocumentosOpen && (
+                              <DocumentosSelectorPopover
+                                onClose={() => setIsDocumentosOpen(false)}
+                                onSelect={(docNome) => {
+                                  handleSelectDocumento(docNome);
+                                  setIsDocumentosOpen(false);
+                                }}
+                              />
+                            )}
+                          </div>
+                        );
+                      }
+
                       if (chip === 'Balancete') {
                         return (
                           <div key={i} className="relative">
                             <button
                               type="button"
-                              onClick={() => setIsBalanceteOpen(prev => !prev)}
+                              onClick={() => {
+                                setIsBalanceteOpen(prev => !prev);
+                                setIsDocumentosOpen(false);
+                              }}
                               className={`h-[30px] px-3 rounded-full border text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
                                 isBalanceteOpen
                                   ? 'bg-blue-50 border-[#1D4ED8] text-[#1D4ED8] ring-2 ring-[#1D4ED8]/20 shadow-xs'
@@ -725,6 +776,7 @@ export const NewRouteView: React.FC = () => {
                     setCoordenadasSelecionadas(null);
                     setPontoPreview(null);
                     setIsBalanceteOpen(false);
+                    setIsDocumentosOpen(false);
                     setTimeout(() => clienteInputRef.current?.focus(), 50);
                   }}
                   className="h-11 px-4 rounded-[10px] border border-[#CBD5E1] bg-white text-[#0F1B2D] text-sm font-bold hover:bg-slate-50 transition-colors"
