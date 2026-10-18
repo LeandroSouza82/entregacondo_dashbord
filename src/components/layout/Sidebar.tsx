@@ -35,40 +35,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
       id: 'new_route' as ActiveTab,
       label: 'Nova rota de entregas',
       icon: Route,
-      badge: 'Design Exato',
+      badge: null,
       highlight: true,
     },
     {
       id: 'routing' as ActiveTab,
       label: 'Comparador de Rotas',
       icon: Route,
-      badge: 'IA Logística',
+      badge: null,
       highlight: false,
     },
     {
       id: 'deliveries' as ActiveTab,
       label: 'Gestão de entregas',
       icon: PackageCheck,
-      badge: '20 na fila',
+      badge: null,
     },
     {
       id: 'approvals' as ActiveTab,
       label: 'Aprovações de Acesso',
       icon: UserCheck,
-      badge: 'App Flutter',
+      badge: null,
       highlight: true,
     },
     {
       id: 'drivers' as ActiveTab,
       label: 'Motoristas',
       icon: Truck,
-      badge: '3 ativos',
+      badge: null,
     },
     {
       id: 'condos' as ActiveTab,
       label: 'Endereços salvos',
       icon: Building2,
-      badge: '128 salvos',
+      badge: null,
     },
     {
       id: 'history' as ActiveTab,
@@ -176,8 +176,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
         </div>
         <p className="text-[11px] text-slate-400 leading-tight">
           {isSupabaseConfigured
-            ? 'Conectado à nuvem Supabase em tempo real'
-            : 'Ambiente Mock Ativo (Pronto para sincronizar Supabase)'}
+            ? 'Conexão Supabase configurada'
+            : 'Conexão não configurada'}
         </p>
       </div>
 

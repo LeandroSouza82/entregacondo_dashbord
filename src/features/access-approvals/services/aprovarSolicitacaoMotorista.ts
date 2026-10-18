@@ -58,6 +58,9 @@ export async function aprovarSolicitacaoMotorista(
     if (res?.codigo === 'REVISAO_OBRIGATORIA') {
       throw new Error('A revisão esperada do veículo é obrigatória para registrar a aprovação do veículo.');
     }
+    if (res?.codigo === 'VEICULO_OUTRA_EMPRESA') {
+      throw new Error('O veículo informado pertence a outra empresa. A gestão não pode aprovar veículos de terceiros.');
+    }
     throw new Error(res?.mensagem || 'Falha ao processar aprovação.');
   }
 

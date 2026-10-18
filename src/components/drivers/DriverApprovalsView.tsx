@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   UserCheck, 
   Clock, 
   ShieldAlert, 
   CheckCircle2, 
   AlertCircle, 
-  RotateCw 
+  RotateCw,
+  Trash2,
+  HardDrive,
+  RefreshCw
 } from 'lucide-react';
 
 import { useAccessApprovals } from '../../features/access-approvals/hooks/useAccessApprovals';
@@ -19,6 +22,13 @@ import { ModalSuspenderAcesso } from '../../features/access-approvals/components
 
 import type { DocumentoVeiculoItem } from '../../features/vehicle-documents/types/vehicleDocument';
 import { VisualizadorDocumento } from '../../features/vehicle-documents/components/VisualizadorDocumento';
+import {
+  processarFilaLimpezaStorage,
+  consultarEstatisticasFilaLimpeza,
+  retomarLimpezaFalha,
+  type EstatisticasFilaLimpeza,
+  type ResultadoProcessamentoFila
+} from '../../features/vehicle-documents/services/processarFilaLimpezaStorage';
 
 export const DriverApprovalsView: React.FC = () => {
   const {
@@ -53,6 +63,58 @@ export const DriverApprovalsView: React.FC = () => {
   const [processandoAcao, setProcessandoAcao] = useState(false);
   const [alertaErroLocal, setAlertaErroLocal] = useState<string | null>(null);
 
+  // Estados da Fila de Limpeza do Storage
+  const [statsFila, setStatsFila] = useState<EstatisticasFilaLimpeza | null>(null);
+  const [resultadoLimpeza, setResultadoLimpeza] = useState<ResultadoProcessamentoFila | null>(null);
+  const [processandoFila, setProcessandoFila] = useState(false);
+  const [exibirPainelStorage, setExibirPainelStorage] = useState(false);
+
+  const carregarStats = useCallback(async () => {
+    if (modoDemo) return;
+    try {
+      const stats = await consultarEstatisticasFilaLimpeza();
+      setStatsFila(stats);
+    } catch {
+      // Falha silenciosa no polling de estatísticas
+    }
+  }, [modoDemo]);
+
+  useEffect(() => {
+    carregarStats();
+  }, [carregarStats]);
+
+  const handleProcessarFila = async () => {
+    setProcessandoFila(true);
+    setAlertaErroLocal(null);
+    try {
+      const res = await processarFilaLimpezaStorage(15);
+      setResultadoLimpeza(res);
+      setAlertaSucesso(
+        `Fila de limpeza processada: ${res.sucessosCompletos} item(ns) removido(s) com sucesso.` +
+        (res.removidosFisicoPendenteConfirmacao > 0 ? ` (${res.removidosFisicoPendenteConfirmacao} pendentes de confirmação no banco).` : '')
+      );
+      await carregarStats();
+    } catch (err) {
+      setAlertaErroLocal(err instanceof Error ? err.message : 'Falha ao processar fila de limpeza.');
+    } finally {
+      setProcessandoFila(false);
+    }
+  };
+
+  const handleRetomarItem = async (filaId: string) => {
+    setProcessandoFila(true);
+    setAlertaErroLocal(null);
+    try {
+      await retomarLimpezaFalha(filaId);
+      setAlertaSucesso('Item retornado ao estado pendente para retentativa de limpeza.');
+      await carregarStats();
+    } catch (err) {
+      setAlertaErroLocal(err instanceof Error ? err.message : 'Falha ao retomar limpeza.');
+    } finally {
+      setProcessandoFila(false);
+    }
+  };
+
   const handleAprovar = async (dados: {
     solicitacaoId: string;
     criarNovoMotorista: boolean;
@@ -67,6 +129,7 @@ export const DriverApprovalsView: React.FC = () => {
     try {
       await aprovar(dados);
       setModalAprovarItem(null);
+      await carregarStats();
     } catch (err) {
       setAlertaErroLocal(err instanceof Error ? err.message : 'Falha na aprovação.');
     } finally {
@@ -133,7 +196,25 @@ export const DriverApprovalsView: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => carregarDados()}
+            onClick={() => setExibirPainelStorage(!exibirPainelStorage)}
+            className="h-9 px-3 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Monitorar e executar limpeza de arquivos descartados do Storage"
+          >
+            <HardDrive className="w-3.5 h-3.5 text-slate-600" />
+            <span>Fila Storage</span>
+            {statsFila && (statsFila.pendentes > 0 || statsFila.falhas > 0) && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                {statsFila.pendentes + statsFila.falhas}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              carregarDados();
+              carregarStats();
+            }}
             disabled={carregando}
             className="h-9 px-3 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
           >
@@ -142,6 +223,92 @@ export const DriverApprovalsView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Painel Expansível de Gerenciamento da Fila de Limpeza do Storage */}
+      {exibirPainelStorage && (
+        <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-slate-700" />
+              <h3 className="text-xs font-bold text-[#0F1B2D] uppercase tracking-wider">
+                Recuperação e Limpeza Física do Storage (Bucket veiculos-documentos)
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={handleProcessarFila}
+              disabled={processandoFila}
+              className="px-3 py-1.5 bg-[#0F1B2D] hover:bg-[#1A2C42] text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3 h-3 ${processandoFila ? 'animate-spin' : ''}`} />
+              <span>{processandoFila ? 'Processando Fila...' : 'Processar Fila Agora'}</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+              <span className="text-[11px] text-slate-500 font-medium">Pendentes na Fila:</span>
+              <div className="text-lg font-bold text-amber-600">{statsFila?.pendentes ?? 0}</div>
+            </div>
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+              <span className="text-[11px] text-slate-500 font-medium">Em Processamento:</span>
+              <div className="text-lg font-bold text-blue-600">{statsFila?.emProcessamento ?? 0}</div>
+            </div>
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+              <span className="text-[11px] text-slate-500 font-medium">Limpezas Falhas:</span>
+              <div className="text-lg font-bold text-red-600">{statsFila?.falhas ?? 0}</div>
+            </div>
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+              <span className="text-[11px] text-slate-500 font-medium">Concluídos com Sucesso:</span>
+              <div className="text-lg font-bold text-emerald-600">{statsFila?.concluidos ?? 0}</div>
+            </div>
+          </div>
+
+          {resultadoLimpeza && (
+            <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs space-y-1.5">
+              <div className="font-semibold text-[#0F1B2D]">Último Resultado de Processamento:</div>
+              <div className="text-[11px] text-slate-600 flex flex-wrap gap-3">
+                <span>Reivindicados: <b>{resultadoLimpeza.totalReivindicados}</b></span>
+                <span className="text-emerald-700">Sucessos Completos: <b>{resultadoLimpeza.sucessosCompletos}</b></span>
+                {resultadoLimpeza.removidosFisicoPendenteConfirmacao > 0 && (
+                  <span className="text-amber-700">Físico OK / Confirmação Pendente: <b>{resultadoLimpeza.removidosFisicoPendenteConfirmacao}</b></span>
+                )}
+                {resultadoLimpeza.falhasFisicas > 0 && (
+                  <span className="text-red-700">Falhas Físicas: <b>{resultadoLimpeza.falhasFisicas}</b></span>
+                )}
+              </div>
+
+              {resultadoLimpeza.itens.length > 0 && (
+                <div className="mt-2 space-y-1 max-h-36 overflow-y-auto">
+                  {resultadoLimpeza.itens.map((it) => (
+                    <div key={it.filaId} className="flex items-center justify-between text-[11px] p-1.5 bg-slate-50 rounded border border-slate-100">
+                      <span className="font-mono truncate max-w-xs">{it.storagePath}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          it.remocaoFisicaSucesso && it.confirmacaoBancoSucesso
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {it.statusFinal}
+                        </span>
+                        {it.statusFinal === 'falhou' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRetomarItem(it.filaId)}
+                            className="text-xs text-blue-600 hover:underline font-semibold cursor-pointer"
+                          >
+                            Retomar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Indicador de Estado da Integração e Alternador de Demonstração */}
       <IndicadorEstadoIntegracao modoDemo={modoDemo} onAlternarModoDemo={alternarModoDemo} />
@@ -259,9 +426,7 @@ export const DriverApprovalsView: React.FC = () => {
         }}
       />
 
-      {/* ========================================================================= */}
-      {/* MODAL 1: APROVAÇÃO (CRIAR NOVO OU VINCULAR EXISTENTE) */}
-      {/* ========================================================================= */}
+      {/* MODAIS DE AÇÃO */}
       {modalAprovarItem && (
         <ModalAprovarMotorista
           solicitacao={modalAprovarItem}
@@ -273,9 +438,6 @@ export const DriverApprovalsView: React.FC = () => {
         />
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 2: REJEIÇÃO */}
-      {/* ========================================================================= */}
       {modalRejeitarItem && (
         <ModalRejeitarAcesso
           solicitacao={modalRejeitarItem}
@@ -285,9 +447,6 @@ export const DriverApprovalsView: React.FC = () => {
         />
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 3: SUSPENSÃO */}
-      {/* ========================================================================= */}
       {modalSuspenderItem && (
         <ModalSuspenderAcesso
           solicitacao={modalSuspenderItem}
@@ -297,9 +456,6 @@ export const DriverApprovalsView: React.FC = () => {
         />
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 4: VISUALIZADOR SEGURO DE DOCUMENTO / FOTO */}
-      {/* ========================================================================= */}
       {documentoVisualizar && (
         <VisualizadorDocumento
           documento={documentoVisualizar}

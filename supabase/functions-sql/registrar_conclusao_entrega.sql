@@ -37,7 +37,7 @@ BEGIN
 
     SELECT * INTO v_entrega
     FROM public.entregas
-    WHERE id = p_entrega_id;
+    WHERE id = p_entrega_id FOR UPDATE;
 
     IF NOT FOUND THEN
         RETURN jsonb_build_object(
@@ -48,10 +48,12 @@ BEGIN
     END IF;
 
     -- Valida permissão do motorista ou gestor
-    v_motorista_id := public.fn_motorista_id_do_usuario(v_user_id);
+    SELECT m.id INTO v_motorista_id
+    FROM public.motoristas m
+    WHERE m.id = v_entrega.motorista_id
+      AND m.empresa_id = v_entrega.empresa_id AND m.user_id = v_user_id;
 
-    IF (v_entrega.motorista_id IS NOT NULL AND v_motorista_id != v_entrega.motorista_id)
-       AND NOT public.fn_usuario_e_gestor_empresa(v_entrega.empresa_id) THEN
+    IF public.fn_usuario_pode_operar_motorista(v_entrega.empresa_id, v_entrega.motorista_id) IS NOT TRUE THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ACESSO_NEGADO',

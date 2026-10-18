@@ -13,6 +13,10 @@
 -- 4. Separação explícita entre aprovação de vínculo e aprovação de veículo:
 --    Aprovar o vínculo não aprova automaticamente o veículo a menos que
 --    p_aprovar_veiculo = TRUE E a revisão esperada seja fornecida e conferida.
+-- 5. ISOLAMENTO ESTRITO ENTRE EMPRESAS:
+--    O veículo aprovado deve obrigatoriamente pertencer à mesma empresa da solicitação.
+--    Veículos pertencentes a outras empresas nunca são aprovados nem têm seus dados
+--    copiados para o cadastro do motorista nesta empresa.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.aprovar_solicitacao_motorista(
@@ -61,7 +65,7 @@ BEGIN
     -- --------------------------------------------------------------------------
     -- 2. VALIDAÇÃO DE AUTORIZAÇÃO ANTES DE QUALQUER LEITURA OU RESPOSTA
     -- --------------------------------------------------------------------------
-    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ACESSO_NEGADO',
@@ -118,20 +122,49 @@ BEGIN
     END IF;
 
     -- --------------------------------------------------------------------------
-    -- 5. PRÉ-VALIDAÇÃO DO VEÍCULO (SE APROVAÇÃO DO VEÍCULO FOR SOLICITADA)
+    -- 5. PRÉ-VALIDAÇÃO DO VEÍCULO COM ISOLAMENTO ESTRITO ENTRE EMPRESAS
     -- --------------------------------------------------------------------------
-    -- Busca veículo declarado se houver, com bloqueio FOR UPDATE
+    -- O veículo deve pertencer OBRIGATORIAMENTE à mesma empresa da solicitação
     SELECT * INTO v_veiculo
     FROM public.veiculos_motoristas
     WHERE user_id = v_solicitacao.user_id
+      AND empresa_id = v_solicitacao.empresa_id
     FOR UPDATE;
+
+    -- Se não encontrou veículo nesta empresa, confere se há veículo cadastrado em OUTRA empresa
+    IF v_veiculo.id IS NULL THEN
+        IF EXISTS (
+            SELECT 1
+            FROM public.veiculos_motoristas
+            WHERE user_id = v_solicitacao.user_id
+              AND empresa_id != v_solicitacao.empresa_id
+        ) THEN
+            -- O condutor possui veículo declarado em outra empresa
+            IF p_aprovar_veiculo THEN
+                RETURN jsonb_build_object(
+                    'sucesso', FALSE,
+                    'codigo', 'VEICULO_OUTRA_EMPRESA',
+                    'mensagem', 'O condutor possui veículo cadastrado em outra empresa. A gestão não pode aprovar veículo de terceiros.'
+                );
+            END IF;
+        END IF;
+    END IF;
 
     IF p_aprovar_veiculo THEN
         IF v_veiculo.id IS NULL THEN
             RETURN jsonb_build_object(
                 'sucesso', FALSE,
                 'codigo', 'VEICULO_NAO_ENCONTRADO',
-                'mensagem', 'O condutor não possui veículo declarado para aprovação.'
+                'mensagem', 'O condutor não possui veículo declarado para esta empresa.'
+            );
+        END IF;
+
+        -- Validação explícita de consistência de isolamento
+        IF v_veiculo.empresa_id != v_solicitacao.empresa_id THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'VEICULO_OUTRA_EMPRESA',
+                'mensagem', 'Divergência de isolamento: o veículo pertence a outra empresa.'
             );
         END IF;
 
@@ -178,9 +211,12 @@ BEGIN
         v_telefone_final := COALESCE(NULLIF(TRIM(p_telefone_motorista), ''), v_perfil.telefone, '(00) 00000-0000');
         v_modelo_final := CASE 
             WHEN v_veiculo.id IS NOT NULL THEN (v_veiculo.marca || ' ' || v_veiculo.modelo)
-            ELSE 'Veículo Declarado'
+            ELSE 'Veículo Não Declarado'
         END;
-        v_placa_final := COALESCE(v_veiculo.placa, 'SEM-PLACA');
+        v_placa_final := CASE
+            WHEN v_veiculo.id IS NOT NULL THEN v_veiculo.placa
+            ELSE 'SEM-PLACA'
+        END;
 
         -- Previne duplicidade de cadastro na retentativa: busca se já existe motorista desta empresa para este user_id
         SELECT id INTO v_motorista_existente_id
@@ -241,7 +277,7 @@ BEGIN
     -- --------------------------------------------------------------------------
     -- 7. ATUALIZAÇÃO DO VEÍCULO (SE APROVAÇÃO FOI EXPLICITAMENTE CONCEDIDA)
     -- --------------------------------------------------------------------------
-    IF p_aprovar_veiculo AND v_veiculo.id IS NOT NULL THEN
+    IF p_aprovar_veiculo AND v_veiculo.id IS NOT NULL AND v_veiculo.empresa_id = v_solicitacao.empresa_id THEN
         UPDATE public.veiculos_motoristas
         SET status_analise = 'aprovado',
             revisao = revisao + 1,
@@ -249,7 +285,7 @@ BEGIN
             analisado_em = timezone('utc'::text, now()),
             motivo_rejeicao = NULL,
             updated_at = timezone('utc'::text, now())
-        WHERE id = v_veiculo.id;
+        WHERE id = v_veiculo.id AND empresa_id = v_solicitacao.empresa_id;
 
         UPDATE public.veiculos_documentos
         SET status_analise = 'aprovado',
@@ -257,7 +293,7 @@ BEGIN
             analisado_em = timezone('utc'::text, now()),
             motivo_rejeicao = NULL,
             updated_at = timezone('utc'::text, now())
-        WHERE veiculo_id = v_veiculo.id;
+        WHERE veiculo_id = v_veiculo.id AND empresa_id = v_solicitacao.empresa_id;
     END IF;
 
     -- --------------------------------------------------------------------------

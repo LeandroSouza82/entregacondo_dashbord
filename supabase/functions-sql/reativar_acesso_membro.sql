@@ -26,7 +26,7 @@ BEGIN
         );
     END IF;
 
-    IF NOT public.fn_usuario_e_gestor_empresa(v_membro.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_membro.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ACESSO_NEGADO',

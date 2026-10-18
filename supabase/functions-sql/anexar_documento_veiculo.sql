@@ -4,14 +4,15 @@
 -- Valida no servidor a existência real do objeto no storage.objects,
 -- o isolamento por empresa/usuário, tamanho, MIME type e limites operacionais.
 --
--- COORDENAÇÃO DE CICLO DE VIDA DO STORAGE:
--- 1. Impede vinculação de objeto cuja exclusão está autorizada ou em andamento
---    (verificando status na tabela storage_limpeza_fila).
--- 2. Na substituição de arquivo (novo CRLV ou nova foto para o mesmo ângulo),
---    desvincula a evidência antiga e a enfileira atomicamente em storage_limpeza_fila
---    com status 'pendente' para limpeza física via API do Storage.
--- 3. A substituição ou vinculação incrementa a revisão do veículo e, se aprovado,
---    reverte o status para 'pendente' com justificativa explícita.
+-- PROTOCOLO DE RESERVA E COORDENAÇÃO DE CICLO DE VIDA DO STORAGE:
+-- 1. Disputa atômica do recurso de coordenação: adquire lock FOR UPDATE na linha
+--    correspondente em public.storage_limpeza_fila para o storage_path informado.
+-- 2. Exige que o objeto esteja no estado 'reservado' (criado via reservar_upload_evidencia).
+-- 3. Bloqueia terminantemente vinculação se o estado for 'pendente', 'em_processamento',
+--    'concluido' (ARQUIVO_EM_LIMPEZA), 'falhou' (ARQUIVO_DESCARTADO) ou 'vinculado' (ARQUIVO_JA_VINCULADO).
+-- 4. Ao vincular com sucesso, transiciona o estado da reserva para 'vinculado'.
+-- 5. Na substituição (novo CRLV ou foto para mesmo ângulo), desvincula o arquivo anterior
+--    e transiciona a linha antiga da fila para 'pendente' para permitir exclusão física.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.anexar_documento_veiculo(
@@ -41,7 +42,8 @@ DECLARE
     v_tamanho_real BIGINT;
     v_mime_real TEXT;
     v_old_storage_path TEXT;
-    v_fila_id UUID := NULL;
+    v_item_fila RECORD;
+    v_fila_substituicao_id UUID := NULL;
 BEGIN
     IF v_user_id IS NULL THEN
         RETURN jsonb_build_object(
@@ -93,7 +95,6 @@ BEGIN
             );
         END IF;
     ELSE
-        -- Documentos não devem ter ângulo
         p_angulo_foto := NULL;
     END IF;
 
@@ -126,12 +127,34 @@ BEGIN
         );
     END IF;
 
-    -- 4b. Previne vinculação ou reutilização de objeto cuja exclusão foi autorizada ou está em andamento
-    IF EXISTS (
-        SELECT 1 FROM public.storage_limpeza_fila
-        WHERE storage_path = TRIM(p_storage_path)
-          AND status IN ('pendente', 'em_processamento', 'concluido')
-    ) THEN
+    -- --------------------------------------------------------------------------
+    -- 4b. PROTOCOLO DE RESERVA E COORDENAÇÃO ATÔMICA (MUTEX NA FILA DE LIMPEZA)
+    -- --------------------------------------------------------------------------
+    -- Adquire lock FOR UPDATE na linha correspondente ao storage_path na fila
+    SELECT * INTO v_item_fila
+    FROM public.storage_limpeza_fila
+    WHERE storage_path = TRIM(p_storage_path)
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'ARQUIVO_NAO_RESERVADO',
+            'mensagem', 'O arquivo não possui reserva prévia válida no sistema de armazenamento.'
+        );
+    END IF;
+
+    -- Bloqueia reutilização de caminho com limpeza falha (Item 2)
+    IF v_item_fila.status = 'falhou' THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'ARQUIVO_DESCARTADO',
+            'mensagem', 'Este caminho foi descartado com falha de limpeza e não pode ser reutilizado.'
+        );
+    END IF;
+
+    -- Bloqueia vinculação se o arquivo estiver em limpeza ou já concluído
+    IF v_item_fila.status IN ('pendente', 'em_processamento', 'concluido') THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ARQUIVO_EM_LIMPEZA',
@@ -139,7 +162,25 @@ BEGIN
         );
     END IF;
 
-    -- 4c. Previne reutilização ou colisão de caminho já vinculado a outro documento ativo
+    -- Bloqueia vinculação se o arquivo já foi vinculado a outro documento ativo
+    IF v_item_fila.status = 'vinculado' THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'ARQUIVO_JA_VINCULADO',
+            'mensagem', 'Este caminho de arquivo já se encontra vinculado a um documento ativo.'
+        );
+    END IF;
+
+    -- Exige estritamente o status 'reservado'
+    IF v_item_fila.status != 'reservado' THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'STATUS_RESERVA_INVALIDO',
+            'mensagem', 'O status da reserva (' || v_item_fila.status || ') não autoriza vinculação.'
+        );
+    END IF;
+
+    -- Previne reutilização ou colisão na tabela de documentos ativos
     IF EXISTS (
         SELECT 1 FROM public.veiculos_documentos
         WHERE storage_path = TRIM(p_storage_path)
@@ -254,22 +295,38 @@ BEGIN
 
             -- Se o caminho for diferente, enfileira o antigo para limpeza segura
             IF v_old_storage_path IS NOT NULL AND v_old_storage_path != TRIM(p_storage_path) THEN
-                INSERT INTO public.storage_limpeza_fila (
-                    bucket_id,
-                    storage_path,
-                    empresa_id,
-                    user_id,
-                    motivo,
-                    status
-                ) VALUES (
-                    'veiculos-documentos',
-                    v_old_storage_path,
-                    v_veiculo.empresa_id,
-                    v_user_id,
-                    'substituicao_foto_' || p_angulo_foto,
-                    'pendente'
-                )
-                RETURNING id INTO v_fila_id;
+                UPDATE public.storage_limpeza_fila
+                SET status = 'pendente',
+                    motivo = 'substituicao_foto_' || p_angulo_foto,
+                    tentativas = 0,
+                    ultimo_erro = NULL,
+                    autorizado_em = timezone('utc'::text, now()),
+                    updated_at = timezone('utc'::text, now())
+                WHERE storage_path = v_old_storage_path
+                RETURNING id INTO v_fila_substituicao_id;
+
+                IF NOT FOUND THEN
+                    INSERT INTO public.storage_limpeza_fila (
+                        bucket_id,
+                        storage_path,
+                        empresa_id,
+                        user_id,
+                        motivo,
+                        status
+                    ) VALUES (
+                        'veiculos-documentos',
+                        v_old_storage_path,
+                        v_veiculo.empresa_id,
+                        v_user_id,
+                        'substituicao_foto_' || p_angulo_foto,
+                        'pendente'
+                    )
+                    ON CONFLICT (storage_path) DO UPDATE SET
+                        status = 'pendente',
+                        motivo = 'substituicao_foto_' || p_angulo_foto,
+                        updated_at = timezone('utc'::text, now())
+                    RETURNING id INTO v_fila_substituicao_id;
+                END IF;
             END IF;
         END IF;
 
@@ -287,22 +344,38 @@ BEGIN
 
             -- Se o caminho for diferente, enfileira o antigo para limpeza segura
             IF v_old_storage_path IS NOT NULL AND v_old_storage_path != TRIM(p_storage_path) THEN
-                INSERT INTO public.storage_limpeza_fila (
-                    bucket_id,
-                    storage_path,
-                    empresa_id,
-                    user_id,
-                    motivo,
-                    status
-                ) VALUES (
-                    'veiculos-documentos',
-                    v_old_storage_path,
-                    v_veiculo.empresa_id,
-                    v_user_id,
-                    'substituicao_crlv',
-                    'pendente'
-                )
-                RETURNING id INTO v_fila_id;
+                UPDATE public.storage_limpeza_fila
+                SET status = 'pendente',
+                    motivo = 'substituicao_crlv',
+                    tentativas = 0,
+                    ultimo_erro = NULL,
+                    autorizado_em = timezone('utc'::text, now()),
+                    updated_at = timezone('utc'::text, now())
+                WHERE storage_path = v_old_storage_path
+                RETURNING id INTO v_fila_substituicao_id;
+
+                IF NOT FOUND THEN
+                    INSERT INTO public.storage_limpeza_fila (
+                        bucket_id,
+                        storage_path,
+                        empresa_id,
+                        user_id,
+                        motivo,
+                        status
+                    ) VALUES (
+                        'veiculos-documentos',
+                        v_old_storage_path,
+                        v_veiculo.empresa_id,
+                        v_user_id,
+                        'substituicao_crlv',
+                        'pendente'
+                    )
+                    ON CONFLICT (storage_path) DO UPDATE SET
+                        status = 'pendente',
+                        motivo = 'substituicao_crlv',
+                        updated_at = timezone('utc'::text, now())
+                    RETURNING id INTO v_fila_substituicao_id;
+                END IF;
             END IF;
         END IF;
 
@@ -322,7 +395,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 9. Insere novo registro de metadados
+    -- 9. Insere novo registro de metadados em veiculos_documentos
     INSERT INTO public.veiculos_documentos (
         veiculo_id,
         user_id,
@@ -348,7 +421,13 @@ BEGIN
     )
     RETURNING id INTO v_doc_id;
 
-    -- 10. Atualiza revisão e reverte status para pendente caso estivesse aprovado
+    -- 10. Atualiza o estado da reserva para 'vinculado'
+    UPDATE public.storage_limpeza_fila
+    SET status = 'vinculado',
+        updated_at = timezone('utc'::text, now())
+    WHERE id = v_item_fila.id;
+
+    -- 11. Atualiza revisão e reverte status para pendente caso estivesse aprovado
     IF v_veiculo.status_analise = 'aprovado' THEN
         UPDATE public.veiculos_motoristas
         SET status_analise = 'pendente',
@@ -372,7 +451,7 @@ BEGIN
         'tipo_documento', p_tipo_documento,
         'revisao', v_veiculo.revisao + 1,
         'arquivo_substituido_path', v_old_storage_path,
-        'limpeza_fila_id', v_fila_id
+        'limpeza_fila_id', v_fila_substituicao_id
     );
 END;
 $$;

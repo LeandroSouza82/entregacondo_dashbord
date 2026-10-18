@@ -18,6 +18,7 @@ REVOKE ALL ON public.clientes_enderecos FROM anon, authenticated;
 REVOKE ALL ON public.rotas_planejadas FROM anon, authenticated;
 REVOKE ALL ON public.entregas FROM anon, authenticated;
 REVOKE ALL ON public.historico_atendimentos FROM anon, authenticated;
+REVOKE ALL ON public.storage_limpeza_fila FROM anon, authenticated;
 
 -- 2. CONCESSÃO DE LEITURA (SELECT) RESTRITA VIA RLS
 GRANT SELECT ON public.empresas TO authenticated;
@@ -32,6 +33,7 @@ GRANT SELECT ON public.clientes_enderecos TO authenticated;
 GRANT SELECT ON public.rotas_planejadas TO authenticated;
 GRANT SELECT ON public.entregas TO authenticated;
 GRANT SELECT ON public.historico_atendimentos TO authenticated;
+GRANT SELECT ON public.storage_limpeza_fila TO authenticated;
 
 -- 3. PERMISSÃO DE EDIÇÃO BÁSICA EXCLUSIVA NO PRÓPRIO PERFIL
 GRANT UPDATE (nome, telefone, avatar_url) ON public.perfis_usuarios TO authenticated;
@@ -49,7 +51,11 @@ REVOKE EXECUTE ON FUNCTION public.anexar_documento_veiculo(UUID, TEXT, TEXT, TEX
 REVOKE EXECUTE ON FUNCTION public.remover_documento_veiculo(UUID) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.analisar_veiculo_motorista(UUID, BOOLEAN, INT, TEXT) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR, BOOLEAN, INT) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.registrar_limpeza_storage_executada(UUID, BOOLEAN, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.registrar_limpeza_storage_executada(UUID, UUID, BOOLEAN, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.reservar_upload_evidencia(UUID, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.descartar_evidencia_temporaria(TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.reivindicar_itens_limpeza_storage(INT, UUID) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.retomar_limpeza_falha(UUID) FROM PUBLIC;
 
 -- 5. CONCESSÃO DE EXECUÇÃO NAS RPCS DE NEGÓCIO
 GRANT EXECUTE ON FUNCTION public.fn_safe_uuid(TEXT) TO authenticated;
@@ -64,9 +70,13 @@ GRANT EXECUTE ON FUNCTION public.fn_validar_completude_veiculo(UUID) TO authenti
 GRANT EXECUTE ON FUNCTION public.obter_meu_status_acesso() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.solicitar_acesso_empresa(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.cadastrar_meu_veiculo(JSONB) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.reservar_upload_evidencia(UUID, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.anexar_documento_veiculo(UUID, TEXT, TEXT, TEXT, INT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.descartar_evidencia_temporaria(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.remover_documento_veiculo(UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.registrar_limpeza_storage_executada(UUID, BOOLEAN, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.reivindicar_itens_limpeza_storage(INT, UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.retomar_limpeza_falha(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.registrar_limpeza_storage_executada(UUID, UUID, BOOLEAN, TEXT) TO authenticated;
 
 GRANT EXECUTE ON FUNCTION public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR, BOOLEAN, INT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.rejeitar_solicitacao_acesso(UUID, TEXT) TO authenticated;
@@ -82,3 +92,13 @@ GRANT EXECUTE ON FUNCTION public.registrar_conclusao_entrega(UUID, BOOLEAN, TEXT
 GRANT EXECUTE ON FUNCTION public.sincronizar_meu_perfil() TO authenticated;
 
 GRANT EXECUTE ON FUNCTION public.bootstrap_primeiro_gestor(TEXT, TEXT, TEXT) TO service_role;
+
+-- Helpers de autorização e RPCs operacionais não herdam EXECUTE de PUBLIC.
+REVOKE EXECUTE ON FUNCTION public.fn_usuario_pode_operar_motorista(UUID, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.fn_usuario_pode_operar_motorista(UUID, UUID) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.iniciar_rota(UUID) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.concluir_rota(UUID) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.registrar_conclusao_entrega(UUID, BOOLEAN, TEXT, NUMERIC, NUMERIC, TIMESTAMPTZ, TIMESTAMPTZ) FROM PUBLIC;
+
+DROP FUNCTION IF EXISTS public.aprovar_solicitacao_motorista(UUID, UUID);
+REVOKE EXECUTE ON FUNCTION public.bootstrap_primeiro_gestor(TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;

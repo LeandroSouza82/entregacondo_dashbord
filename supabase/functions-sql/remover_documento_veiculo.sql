@@ -4,8 +4,8 @@
 --
 -- PROTOCOLO DE COORDENAÇÃO DE STORAGE:
 -- 1. Remove os metadados da tabela veiculos_documentos.
--- 2. Insere atomicamente o storage_path na tabela storage_limpeza_fila com
---    status 'pendente', autorizando formalmente o DELETE físico no Storage.
+-- 2. Transiciona atomicamente a linha em storage_limpeza_fila para o status 'pendente',
+--    autorizando formalmente o DELETE físico no Storage.
 -- 3. Se o veículo estiver 'aprovado', a remoção da evidência INVALIDA imediatamente
 --    a aprovação, revertendo para 'pendente' e incrementando a revisão do veículo.
 -- 4. Retorna fila_id e storage_path para que o cliente realize o DELETE físico
@@ -26,6 +26,7 @@ DECLARE
     v_veiculo RECORD;
     v_eh_gestor BOOLEAN := FALSE;
     v_fila_id UUID;
+    v_item_fila public.storage_limpeza_fila%ROWTYPE;
 BEGIN
     IF v_user_id IS NULL THEN
         RETURN jsonb_build_object(
@@ -64,7 +65,7 @@ BEGIN
                 'mensagem', public.fn_validar_autorizacao_condutor(v_doc.empresa_id, v_user_id)->>'mensagem'
             );
         END IF;
-    ELSIF public.fn_usuario_e_gestor_empresa(v_doc.empresa_id) THEN
+    ELSIF public.fn_usuario_e_gestor_empresa(v_doc.empresa_id, auth.uid()) THEN
         v_eh_gestor := TRUE;
     ELSE
         RETURN jsonb_build_object(
@@ -74,26 +75,22 @@ BEGIN
         );
     END IF;
 
-    -- 4. Remove a linha de metadados no Postgres
-    DELETE FROM public.veiculos_documentos WHERE id = v_doc.id;
-
-    -- 5. Enfileira o arquivo para limpeza física controlada
-    INSERT INTO public.storage_limpeza_fila (
-        bucket_id,
-        storage_path,
-        empresa_id,
-        user_id,
-        motivo,
-        status
-    ) VALUES (
-        'veiculos-documentos',
-        v_doc.storage_path,
-        v_doc.empresa_id,
-        v_user_id,
-        'remocao_documento_veiculo',
-        'pendente'
-    )
-    RETURNING id INTO v_fila_id;
+    -- Reconfere após adquirir o lock do veículo: outra remoção pode ter ocorrido enquanto aguardávamos.
+    SELECT * INTO v_doc FROM public.veiculos_documentos vd WHERE vd.id = p_documento_id AND vd.veiculo_id = v_veiculo.id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('sucesso', false, 'codigo', 'DOCUMENTO_NAO_ENCONTRADO');
+    END IF;
+    SELECT * INTO v_item_fila FROM public.storage_limpeza_fila f WHERE f.storage_path = v_doc.storage_path FOR UPDATE;
+    IF NOT FOUND OR v_item_fila.status IS DISTINCT FROM 'vinculado'
+        OR v_item_fila.empresa_id IS DISTINCT FROM v_doc.empresa_id OR v_item_fila.user_id IS DISTINCT FROM v_doc.user_id THEN
+        RETURN jsonb_build_object('sucesso', false, 'codigo', 'CICLO_EVIDENCIA_INCONSISTENTE', 'mensagem', 'O vínculo da evidência precisa ser reconciliado antes da remoção.');
+    END IF;
+    DELETE FROM public.veiculos_documentos vd WHERE vd.id = v_doc.id;
+    UPDATE public.storage_limpeza_fila f
+    SET status = 'pendente', motivo = 'remocao_documento_veiculo', tentativas = 0, ultimo_erro = NULL,
+        claim_token = NULL, claimed_by = NULL, lease_expires_at = NULL,
+        autorizado_em = clock_timestamp(), updated_at = clock_timestamp()
+    WHERE f.id = v_item_fila.id RETURNING f.id INTO v_fila_id;
 
     -- 6. Se o veículo já estava aprovado, a remoção INVALIDA a aprovação
     IF v_veiculo.status_analise = 'aprovado' THEN

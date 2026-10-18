@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import { requireCompanyId } from '../../lib/company';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { RouteMap } from './RouteMap';
 import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
 import { ClienteCondominioSearchInput } from './ClienteCondominioSearchInput';
@@ -26,10 +27,7 @@ import {
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 
-const MOCK_PONTO_PARTIDA = {
-  nome: 'Sede da administradora · Centro',
-  coordenadas: { lat: -27.5954, lng: -48.5480 } as PontoCoordenada,
-};
+const MAP_CENTER = { nome: 'Centro do mapa', coordenadas: { lat: -27.5954, lng: -48.5480 } as PontoCoordenada };
 
 interface MotoristaItem {
   id: string;
@@ -41,28 +39,9 @@ interface MotoristaItem {
   empresa_id?: string;
 }
 
-const MOTORISTAS: MotoristaItem[] = [
-  { id: '22222222-2222-2222-2222-222222222221', nome: 'Carlos Mendes', iniciais: 'CM', veiculo: 'Fiorino', status: 'disponível', corAvatar: '#1D4ED8', empresa_id: '11111111-1111-1111-1111-111111111111' },
-  { id: '22222222-2222-2222-2222-222222222222', nome: 'Rafael Souza', iniciais: 'RS', veiculo: 'Moto', status: 'disponível', corAvatar: '#0F766E', empresa_id: '11111111-1111-1111-1111-111111111111' },
-  { id: '22222222-2222-2222-2222-222222222223', nome: 'Anderson Costa', iniciais: 'AC', veiculo: 'Moto', status: 'disponível', corAvatar: '#475569', empresa_id: '11111111-1111-1111-1111-111111111111' },
-];
 
-const ENDERECOS_SALVOS_EXEMPLO = [
-  {
-    endereco: 'Rua Lauro Linhares, 820 · Trindade',
-    complemento: 'Ed. Solar das Palmeiras',
-    entregasContagem: 14,
-    coordenadas: { lat: -27.5992, lng: -48.5205 },
-    tempoPortaria: 12,
-  },
-  {
-    endereco: 'Rua Lauro Linhares, 1120 · Trindade',
-    complemento: 'Res. Lauro Park',
-    entregasContagem: 3,
-    coordenadas: { lat: -27.5978, lng: -48.5175 },
-    tempoPortaria: 8,
-  },
-];
+
+
 
 const CHIPS_OBSERVACOES = [
   'Documentos',
@@ -72,10 +51,10 @@ const CHIPS_OBSERVACOES = [
 ];
 
 export const NewRouteView: React.FC = () => {
-  const [motoristaAtivo, setMotoristaAtivo] = useState<string>('cm');
-  const [otimizarAutomatico, setOtimizarAutomatico] = useState<boolean>(true);
-  const [dataRota, setDataRota] = useState<string>('Segunda, 19/10');
-  const [pontoPartidaTexto, setPontoPartidaTexto] = useState<string>('Sede da administradora · Centro');
+  const [motoristaAtivo, setMotoristaAtivo] = useState<string>('');
+  const [otimizarAutomatico] = useState<boolean>(false);
+  const [dataRota, setDataRota] = useState<string>(() => new Date().toLocaleDateString('pt-BR'));
+  const [pontoPartidaTexto, setPontoPartidaTexto] = useState<string>('');
   
   // Referência para focar naturalmente no campo "Nome do cliente / Condomínio"
   const clienteInputRef = useRef<HTMLInputElement | null>(null);
@@ -100,91 +79,24 @@ export const NewRouteView: React.FC = () => {
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
 
   // Lista de Entregas da Rota (baseada na referência de Florianópolis/São Paulo)
-  const [entregasDaRota, setEntregasDaRota] = useState<PontoParada[]>([
-    {
-      id: 'p1',
-      sequencia: 1,
-      clienteEnderecoId: 'c1',
-      nomeLocal: 'Res. Vista Mar',
-      destinatario: 'Ricardo Almeida',
-      enderecoFormatado: 'Av. Beira-Mar Norte, 3400 · Centro',
-      coordenadas: { lat: -27.5854, lng: -48.5440 },
-      tempoMedioAtendimentoMinutos: 10,
-      prioridade: 'normal',
-      tipoTarefa: 'entrega',
-      codigoRastreio: 'EC-001',
-    },
-    {
-      id: 'p2',
-      sequencia: 2,
-      clienteEnderecoId: 'c2',
-      nomeLocal: 'Ed. Marina Tower',
-      destinatario: 'Luciana Prado',
-      enderecoFormatado: 'Rua Felipe Schmidt, 1250 · Centro',
-      coordenadas: { lat: -27.5912, lng: -48.5510 },
-      tempoMedioAtendimentoMinutos: 8,
-      prioridade: 'normal',
-      tipoTarefa: 'entrega',
-      codigoRastreio: 'EC-002',
-    },
-    {
-      id: 'p3',
-      sequencia: 3,
-      clienteEnderecoId: 'c3',
-      nomeLocal: 'Ed. Bela Vista',
-      destinatario: 'Camila Souza',
-      enderecoFormatado: 'Rua Bocaiúva, 450 · Centro',
-      coordenadas: { lat: -27.5890, lng: -48.5495 },
-      tempoMedioAtendimentoMinutos: 15,
-      prioridade: 'alta',
-      tipoTarefa: 'coleta',
-      codigoRastreio: 'EC-003',
-    },
-    {
-      id: 'p4',
-      sequencia: 4,
-      clienteEnderecoId: 'c4',
-      nomeLocal: 'Ed. Solar das Palmeiras',
-      destinatario: 'Maria Fernanda Rocha',
-      enderecoFormatado: 'Rua Lauro Linhares, 820 · Trindade',
-      coordenadas: { lat: -27.5992, lng: -48.5205 },
-      tempoMedioAtendimentoMinutos: 12,
-      prioridade: 'normal',
-      tipoTarefa: 'entrega',
-      codigoRastreio: 'EC-004',
-    },
-    {
-      id: 'p5',
-      sequencia: 5,
-      clienteEnderecoId: 'c5',
-      nomeLocal: 'Cond. Jardim Imperial',
-      destinatario: 'Paulo Henrique Dias',
-      enderecoFormatado: 'Av. Madre Benvenuta, 1100 · Itacorubi',
-      coordenadas: { lat: -27.5880, lng: -48.5110 },
-      tempoMedioAtendimentoMinutos: 14,
-      prioridade: 'normal',
-      tipoTarefa: 'outros',
-      descricaoOutro: 'Registro de Ata',
-      codigoRastreio: 'EC-005',
-    },
-    {
-      id: 'p6',
-      sequencia: 6,
-      clienteEnderecoId: 'c6',
-      nomeLocal: 'Res. Alameda Park',
-      destinatario: 'Fernando Lopes',
-      enderecoFormatado: 'Rua João Pio Duarte Silva, 900 · Córrego Grande',
-      coordenadas: { lat: -27.5970, lng: -48.5080 },
-      tempoMedioAtendimentoMinutos: 9,
-      prioridade: 'normal',
-      tipoTarefa: 'entrega',
-      codigoRastreio: 'EC-006',
-    },
-  ]);
+  const [entregasDaRota, setEntregasDaRota] = useState<PontoParada[]>([]);
 
   const paradasParaOMapa = useMemo(() => entregasDaRota, [entregasDaRota]);
 
-  const motoristaSelecionado = MOTORISTAS.find(m => m.id === motoristaAtivo) || MOTORISTAS[0];
+  const [MOTORISTAS, setMotoristas] = useState<MotoristaItem[]>([]);
+  const [empresaId, setEmpresaId] = useState('');
+  const [despachando, setDespachando] = useState(false);
+  const despachoKey = useRef(crypto.randomUUID());
+  useEffect(() => {
+    let active = true;
+    void requireCompanyId().then(async id => {
+      const { data, error } = await supabase.from('motoristas').select('*').eq('empresa_id', id).eq('ativo', true);
+      if (error) throw error;
+      if (active) { setEmpresaId(id); setMotoristas((data || []).map(m => ({ id: m.id, nome: m.nome, iniciais: m.nome.split(' ').map(n => n[0]).slice(0, 2).join(''), veiculo: m.veiculo_modelo, status: m.status, corAvatar: '#0F1B2D', empresa_id: m.empresa_id }))); }
+    }).catch((e: Error) => { if (active) setMensagemErro(e.message); });
+    return () => { active = false; };
+  }, []);
+  const motoristaSelecionado = MOTORISTAS.find(m => m.id === motoristaAtivo);
 
   // Callback inteligente: ao selecionar um cliente/condomínio da base salva
   const handleSelectClienteCondominio = useCallback((item: ClienteEnderecoItem) => {
@@ -226,7 +138,7 @@ export const NewRouteView: React.FC = () => {
     setErroValidacao(null);
   }, [blocoApto, nomeCliente]);
 
-  const handleAdicionarEntrega = () => {
+  const handleAdicionarEntrega = async () => {
     if (!nomeCliente.trim() || !enderecoTexto.trim()) return;
 
     // Validação estrita se "Outros" foi selecionado
@@ -259,7 +171,7 @@ export const NewRouteView: React.FC = () => {
       codigoRastreio: `EC-${Math.floor(100000 + Math.random() * 900000)}`,
     };
 
-    setEntregasDaRota(prev => [...prev, nova]);
+
 
     // Memória inteligente: se "outros" foi especificado, salva o termo como chip permanente
     if (tipoTarefa === 'outros' && especificacaoOutro.trim()) {
@@ -268,16 +180,21 @@ export const NewRouteView: React.FC = () => {
 
     // Persistência inteligente: salva para as próximas entregas se selecionado
     if (salvarParaProximas && coordenadasSelecionadas) {
-      salvarClienteEndereco({
-        empresa_id: motoristaSelecionado?.empresa_id,
+      try {
+      const saved = await salvarClienteEndereco({
+        empresa_id: empresaId,
         nome_identificador: nomeCliente.trim(),
         destinatario_padrao: blocoApto.trim() || undefined,
         endereco_completo: enderecoTexto.trim(),
         coordenadas: coordenadasSelecionadas,
         observacoes_acesso: observacaoTexto.trim() || undefined,
-      }).catch((err) => console.warn('Erro ao salvar endereço em segundo plano:', err));
+      });
+      nova.clienteEnderecoId = saved.id;
+      } catch (e) { setMensagemErro(e instanceof Error ? e.message : 'Não foi possível salvar o endereço.'); return; }
     }
 
+    setEntregasDaRota(prev => [...prev, nova]);
+    despachoKey.current = crypto.randomUUID();
     setNomeCliente('');
     setBlocoApto('');
     setEnderecoTexto('');
@@ -341,6 +258,7 @@ export const NewRouteView: React.FC = () => {
   };
 
   const handleEnviarParaMotorista = async () => {
+    if (despachando) return;
     setMensagemErro(null);
 
     if (entregasDaRota.length === 0) {
@@ -355,19 +273,25 @@ export const NewRouteView: React.FC = () => {
       return;
     }
 
+    if (entregasDaRota.some(p => !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(p.clienteEnderecoId))) {
+      setMensagemErro('Salve os endereços no banco antes de despachar. Ative a opção de salvar para próximas entregas.'); return;
+    }
     if (isSupabaseConfigured) {
+      setDespachando(true);
       try {
         const payloadDespacho = {
-          idempotency_key: `despacho-${motoristaSelecionado.id}-${entregasDaRota.map(e => e.codigoRastreio).sort().join('-')}`,
-          empresa_id: motoristaSelecionado.empresa_id || '11111111-1111-1111-1111-111111111111',
+          idempotency_key: despachoKey.current,
+          empresa_id: empresaId,
           motorista_id: motoristaSelecionado.id,
-          distancia_original_km: 74.2,
-          tempo_original_minutos: 192,
-          distancia_otimizada_km: 46.8,
-          tempo_otimizado_minutos: 125,
-          percentual_economia_km: 37,
-          percentual_economia_tempo: 35,
+          distancia_original_km: 0,
+          tempo_original_minutos: 0,
+          distancia_otimizada_km: 0,
+          tempo_otimizado_minutos: 0,
+          percentual_economia_km: 0,
+          percentual_economia_tempo: 0,
           paradas: entregasDaRota.map((parada) => ({
+            cliente_endereco_id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(parada.clienteEnderecoId) ? parada.clienteEnderecoId : null,
+            ordem_na_rota: parada.sequencia,
             codigo_rastreio: parada.codigoRastreio,
             destinatario_nome: parada.destinatario,
             unidade_apartamento: parada.nomeLocal,
@@ -404,22 +328,23 @@ export const NewRouteView: React.FC = () => {
         }
 
         const resp = data as any;
-        if (resp && resp.sucesso === false) {
-          setMensagemErro(`Erro no despacho da rota: ${resp.mensagem || 'Falha no banco de dados'}.`);
+        if (!resp || resp.sucesso !== true) {
+          setMensagemErro(`Erro no despacho da rota: ${resp?.mensagem || 'Falha no banco de dados'}.`);
           setTimeout(() => setMensagemErro(null), 8000);
           return;
         }
 
         setMensagemSucesso(`Rota inteligente com ${entregasDaRota.length} paradas gravada com sucesso no Supabase e despachada para ${motoristaSelecionado.nome}!`);
+        setEntregasDaRota([]); despachoKey.current = crypto.randomUUID();
         setTimeout(() => setMensagemSucesso(null), 6000);
       } catch (err: unknown) {
         console.error('Erro de conexão ao despachar rota:', err);
         setMensagemErro('Erro de conexão ao despachar rota para o servidor. O rascunho foi mantido intacto.');
         setTimeout(() => setMensagemErro(null), 8000);
         return;
-      }
+      } finally { setDespachando(false); }
     } else {
-      setMensagemSucesso(`Modo de Demonstração: Rota com ${entregasDaRota.length} paradas calculada localmente na memória (servidor Supabase não conectado nesta sessão).`);
+      setMensagemErro('Conexão não configurada. A rota não foi enviada.');
       setTimeout(() => setMensagemSucesso(null), 6000);
     }
   };
@@ -522,7 +447,7 @@ export const NewRouteView: React.FC = () => {
                 </span>
                 <h2 className="text-[17px] font-extrabold text-[#0F1B2D] m-0">Adicionar parada</h2>
               </div>
-              <span className="text-xs text-[#516074] font-medium">128 endereços salvos</span>
+              <span className="text-xs text-[#516074] font-medium">Endereços da empresa</span>
             </div>
 
             {/* SELETOR DE TIPO DE SERVIÇO (Segmented Buttons) */}
@@ -643,7 +568,7 @@ export const NewRouteView: React.FC = () => {
                   onChange={setNomeCliente}
                   onSelectClienteEndereco={handleSelectClienteCondominio}
                   placeholder="Ex: Condomínio Jardim América ou Maria Fernanda"
-                  empresaId={motoristaSelecionado?.empresa_id}
+                  empresaId={empresaId}
                 />
               </div>
 
@@ -666,7 +591,7 @@ export const NewRouteView: React.FC = () => {
                 <PlacesAutocompleteInput
                   value={enderecoTexto}
                   onChange={setEnderecoTexto}
-                  enderecosSalvos={ENDERECOS_SALVOS_EXEMPLO}
+                  enderecosSalvos={[]}
                   onAddressSelect={handleAddressSelect}
                 />
               </div>
@@ -881,23 +806,13 @@ export const NewRouteView: React.FC = () => {
               </div>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#DDF3E4] text-[#14532D] text-xs font-bold">
                 <Check className="w-3.5 h-3.5" />
-                Ordem otimizada
+                Ordem de cadastro
               </span>
             </div>
 
             <div className="divide-y divide-[#EAEFF4]">
               {entregasDaRota.map((parada, idx) => {
-                // Distâncias demonstrativas fiéis ao layout
-                const distanciasTexto = ['Início', '0,9 km', '0,6 km', '4,1 km', '1,8 km', '1,5 km'];
-                const badgesAlerta = [
-                  null,
-                  null,
-                  'Portaria só até 17h',
-                  'Cuidado com o cachorro',
-                  'Interfonar no apto 302',
-                  null,
-                ];
-                const tagAlerta = badgesAlerta[idx];
+                const tagAlerta = null;
 
                 return (
                   <div key={parada.id} className="flex items-center gap-3.5 py-3 flex-wrap">
@@ -947,7 +862,7 @@ export const NewRouteView: React.FC = () => {
                     )}
 
                     <div className="min-w-[65px] text-right text-[13px] font-bold text-[#334155]">
-                      {distanciasTexto[idx] || `${(1.2 * (idx + 1)).toFixed(1).replace('.', ',')} km`}
+                      {'—'}
                     </div>
                   </div>
                 );
@@ -955,7 +870,7 @@ export const NewRouteView: React.FC = () => {
             </div>
 
             <div className="border-t border-[#EAEFF4] pt-3 text-[13px] font-bold text-[#1D4ED8] cursor-pointer hover:underline">
-              + 14 entregas · ver todas
+              Fim da lista
             </div>
           </section>
 
@@ -970,14 +885,14 @@ export const NewRouteView: React.FC = () => {
               <div>
                 <h2 className="text-[17px] font-extrabold text-[#0F1B2D] m-0">Rota inteligente</h2>
                 <p className="text-[#516074] text-[13px] mt-1 leading-snug">
-                  Sempre segue para a entrega mais próxima, partindo do ponto inicial, para gastar menos tempo e km.
+                  Prévia dos endereços. Distância e tempo de trajeto ainda não calculados.
                 </p>
               </div>
 
               {/* Switch Liga/Desliga Rota Inteligente */}
               <button
                 type="button"
-                onClick={() => setOtimizarAutomatico(!otimizarAutomatico)}
+                disabled aria-label="Otimização de trajeto ainda indisponível"
                 role="switch"
                 aria-checked={otimizarAutomatico}
                 className={`flex-none w-[46px] h-[26px] rounded-full p-[3px] transition-colors flex ${
@@ -1000,7 +915,7 @@ export const NewRouteView: React.FC = () => {
 
             {/* MAPA INTERATIVO MAPBOX */}
             <RouteMap
-              pontoPartida={MOCK_PONTO_PARTIDA}
+              pontoPartida={MAP_CENTER}
               paradas={paradasParaOMapa}
               pontoPreview={pontoPreview}
               otimizado={otimizarAutomatico}
@@ -1011,7 +926,7 @@ export const NewRouteView: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <div className="flex justify-between text-[13px]">
                   <span className="font-semibold text-[#2B3A4F]">Ordem de cadastro</span>
-                  <span className="font-bold text-[#0F1B2D]">74,2 km · 3h12</span>
+                  <span className="font-bold text-[#0F1B2D]">Não calculado</span>
                 </div>
                 <div className="h-2.5 rounded-full bg-[#E4E9F0] overflow-hidden">
                   <div className="w-full h-full bg-[#94A3B8]" />
@@ -1021,18 +936,18 @@ export const NewRouteView: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <div className="flex justify-between text-[13px]">
                   <span className="font-semibold text-[#2B3A4F]">Rota otimizada</span>
-                  <span className="font-bold text-[#15803D]">46,8 km · 2h05</span>
+                  <span className="font-bold text-[#15803D]">Não calculado</span>
                 </div>
                 <div className="h-2.5 rounded-full bg-[#E4E9F0] overflow-hidden">
-                  <div className="w-[63%] h-full bg-[#15803D] rounded-full" />
+                  <div className="w-0 h-full bg-[#15803D] rounded-full" />
                 </div>
               </div>
 
               {/* Card Destaque Verde de Economia */}
               <div className="flex items-center gap-3 p-3.5 rounded-xl bg-[#DDF3E4] text-[#14532D]">
-                <div className="text-2xl font-extrabold leading-none">37%</div>
+                <div className="text-2xl font-extrabold leading-none">—</div>
                 <div className="text-[13px] font-semibold leading-tight">
-                  de economia: 27,4 km a menos e 1h07 de tempo ganho
+                  Economia ainda não calculada
                 </div>
               </div>
             </div>
@@ -1042,26 +957,23 @@ export const NewRouteView: React.FC = () => {
           <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex flex-col gap-3">
             <button
               type="button"
-              onClick={handleEnviarParaMotorista}
+              disabled={despachando || !motoristaSelecionado} onClick={handleEnviarParaMotorista}
               className="h-12 rounded-[10px] bg-[#C2410C] hover:bg-[#9A3412] active:scale-98 text-white font-bold text-[15px] transition-all shadow-md shadow-[#C2410C]/25 flex items-center justify-center gap-2 cursor-pointer"
             >
               <Send className="w-4 h-4" />
-              <span>Enviar rota para {motoristaSelecionado.nome.split(' ')[0]}</span>
+              <span>Enviar rota para {motoristaSelecionado?.nome.split(' ')[0] || 'o motorista'}</span>
             </button>
 
             <button
               type="button"
-              onClick={() => {
-                setMensagemSucesso('Rota salva como rascunho com sucesso no banco de dados!');
-                setTimeout(() => setMensagemSucesso(null), 4000);
-              }}
+              onClick={() => { setMensagemErro('O rascunho fica nesta tela até o envio. Ainda não há salvamento de rascunho de rota.'); }}
               className="h-11 rounded-[10px] border border-[#CBD5E1] bg-white hover:bg-slate-50 text-[#0F1B2D] font-bold text-sm transition-colors cursor-pointer"
             >
               Salvar como rascunho
             </button>
 
             <p className="text-xs text-[#516074] text-center m-0 leading-normal">
-              {motoristaSelecionado.nome.split(' ')[0]} recebe a rota no app móvel Flutter, já com endereços, observações e ordem de paradas.
+              {motoristaSelecionado?.nome.split(' ')[0] || 'o motorista'} recebe a rota no app móvel Flutter, já com endereços, observações e ordem de paradas.
             </p>
           </section>
 

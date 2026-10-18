@@ -373,12 +373,15 @@ export interface Database {
           empresa_id: string
           user_id: string
           motivo: string
-          status: 'pendente' | 'em_processamento' | 'concluido' | 'falhou'
+          status: 'reservado' | 'vinculado' | 'pendente' | 'em_processamento' | 'concluido' | 'falhou'
           tentativas: number
           max_tentativas: number
           ultimo_erro: string | null
           autorizado_em: string
           processado_em: string | null
+          claim_token: string | null
+          claimed_by: string | null
+          lease_expires_at: string | null
           created_at: string
           updated_at: string
         }
@@ -389,12 +392,15 @@ export interface Database {
           empresa_id: string
           user_id: string
           motivo: string
-          status?: 'pendente' | 'em_processamento' | 'concluido' | 'falhou'
+          status?: 'reservado' | 'vinculado' | 'pendente' | 'em_processamento' | 'concluido' | 'falhou'
           tentativas?: number
           max_tentativas?: number
           ultimo_erro?: string | null
           autorizado_em?: string
           processado_em?: string | null
+          claim_token?: string | null
+          claimed_by?: string | null
+          lease_expires_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -478,6 +484,8 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
+      salvar_cliente_endereco: { Args: { p_dados: Json }; Returns: Json }
+
       obter_meu_status_acesso: {
         Args: Record<PropertyKey, never>
         Returns: Json
@@ -548,8 +556,37 @@ export interface Database {
       registrar_limpeza_storage_executada: {
         Args: {
           p_fila_id: string
+          p_claim_token: string
           p_sucesso: boolean
           p_erro?: string | null
+        }
+        Returns: Json
+      }
+      reservar_upload_evidencia: {
+        Args: {
+          p_empresa_id: string
+          p_tipo_documento: string
+          p_nome_arquivo: string
+          p_angulo_foto?: string | null
+        }
+        Returns: Json
+      }
+      descartar_evidencia_temporaria: {
+        Args: {
+          p_storage_path: string
+        }
+        Returns: Json
+      }
+      reivindicar_itens_limpeza_storage: {
+        Args: {
+          p_limite?: number
+          p_fila_id?: string | null
+        }
+        Returns: Json[]
+      }
+      retomar_limpeza_falha: {
+        Args: {
+          p_fila_id: string
         }
         Returns: Json
       }

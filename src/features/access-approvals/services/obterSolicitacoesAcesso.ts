@@ -1,3 +1,4 @@
+import { requireCompanyId } from '../../../lib/company';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import type { SolicitacaoAcessoItem, MotoristaFrotaItem } from '../types/accessApproval';
 import type { VeiculoDeclarado } from '../../vehicles/types/vehicle';
@@ -13,6 +14,9 @@ export async function obterSolicitacoesAcesso(): Promise<ResultadoConsultaSolici
     throw new Error('Supabase não configurado. Verifique as variáveis de ambiente.');
   }
 
+  const companyId = await requireCompanyId();
+  const company = await supabase.from('empresas').select('nome').eq('id', companyId).single();
+  if (company.error) throw new Error(company.error.message);
   // 1. Busca solicitações de acesso
   const { data: solData, error: solErr } = await supabase
     .from('solicitacoes_acesso')
@@ -27,6 +31,7 @@ export async function obterSolicitacoesAcesso(): Promise<ResultadoConsultaSolici
       decidido_em,
       created_at
     `)
+    .eq('empresa_id', companyId)
     .order('created_at', { ascending: false });
 
   if (solErr) {
@@ -36,11 +41,12 @@ export async function obterSolicitacoesAcesso(): Promise<ResultadoConsultaSolici
   // 2. Busca perfis, veículos, documentos e motoristas da empresa em paralelo
   const [perfisRes, veiculosRes, docsRes, motoristasRes] = await Promise.all([
     supabase.from('perfis_usuarios').select('id, nome, email, telefone, avatar_url'),
-    supabase.from('veiculos_motoristas').select('*'),
-    supabase.from('veiculos_documentos').select('*'),
-    supabase.from('motoristas').select('*'),
+    supabase.from('veiculos_motoristas').select('*').eq('empresa_id', companyId),
+    supabase.from('veiculos_documentos').select('*').eq('empresa_id', companyId),
+    supabase.from('motoristas').select('*').eq('empresa_id', companyId),
   ]);
 
+  for (const result of [perfisRes, veiculosRes, docsRes, motoristasRes]) if (result.error) throw new Error(result.error.message);
   const perfis = (perfisRes.data || []) as Array<{ id: string; nome: string; email: string; telefone: string | null; avatar_url: string | null }>;
   const veiculos = (veiculosRes.data || []) as VeiculoDeclarado[];
   const documentos = (docsRes.data || []) as DocumentoVeiculoItem[];
@@ -55,7 +61,7 @@ export async function obterSolicitacoesAcesso(): Promise<ResultadoConsultaSolici
     return {
       id: sol.id,
       empresa_id: sol.empresa_id,
-      empresa_nome: 'EntregaCondo Matriz (Florianópolis)',
+      empresa_nome: company.data.nome,
       user_id: sol.user_id,
       usuario_nome: perfil?.nome || `Condutor (${sol.user_id.slice(0, 8)})`,
       usuario_email: perfil?.email || 'e-mail não disponível',
