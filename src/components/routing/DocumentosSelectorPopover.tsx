@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileText, 
-  FileCheck2, 
+  ClipboardCheck, 
   BarChart3, 
   Scale, 
   CreditCard, 
   FolderPlus, 
   X, 
   ChevronRight,
-  Send
+  Send,
+  Sparkles
 } from 'lucide-react';
 
 interface DocumentosSelectorPopoverProps {
@@ -23,6 +24,7 @@ interface CategoriaDocumento {
   icone: React.ElementType;
   corBg: string;
   corTexto: string;
+  destaque?: boolean;
 }
 
 const CATEGORIAS_DOCUMENTOS: CategoriaDocumento[] = [
@@ -35,12 +37,13 @@ const CATEGORIAS_DOCUMENTOS: CategoriaDocumento[] = [
     corTexto: 'text-[#1D4ED8]',
   },
   {
-    id: 'ata',
-    nome: 'Ata de Assembleia',
-    descricao: 'Registro formal de deliberações e votações',
-    icone: FileCheck2,
-    corBg: 'bg-emerald-50 border-emerald-200',
-    corTexto: 'text-emerald-700',
+    id: 'registro_ata',
+    nome: 'Registro de Ata',
+    descricao: 'Cartório e deliberações de assembleia',
+    icone: ClipboardCheck,
+    corBg: 'bg-emerald-100 border-emerald-300',
+    corTexto: 'text-emerald-800',
+    destaque: true,
   },
   {
     id: 'prestacao',
@@ -148,15 +151,27 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
               key={item.id}
               type="button"
               onClick={() => onSelect(item.nome)}
-              className="w-full text-left p-2.5 rounded-xl border border-slate-100 hover:border-[#1D4ED8]/30 hover:bg-blue-50/60 transition-all flex items-center justify-between group cursor-pointer"
+              className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between group cursor-pointer ${
+                item.destaque
+                  ? 'border-emerald-300 bg-emerald-50/50 hover:bg-emerald-50 hover:border-emerald-400 shadow-2xs ring-1 ring-emerald-500/15'
+                  : 'border-slate-100 hover:border-[#1D4ED8]/30 hover:bg-blue-50/60'
+              }`}
             >
               <div className="flex items-center gap-3 min-w-0">
                 <div className={`w-8 h-8 rounded-lg border flex items-center justify-center flex-shrink-0 ${item.corBg} ${item.corTexto} shadow-2xs`}>
                   <Icone className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-[#0F1B2D] group-hover:text-[#1D4ED8] transition-colors leading-snug">
-                    {item.nome}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[#0F1B2D] group-hover:text-[#1D4ED8] transition-colors leading-snug">
+                      {item.nome}
+                    </span>
+                    {item.destaque && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">
+                        <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                        Principal
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-slate-500 truncate leading-tight">
                     {item.descricao}
@@ -164,7 +179,9 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
                 </div>
               </div>
 
-              <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[#1D4ED8] group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+              <ChevronRight className={`w-4 h-4 text-slate-300 group-hover:translate-x-0.5 transition-all flex-shrink-0 ${
+                item.destaque ? 'group-hover:text-emerald-700' : 'group-hover:text-[#1D4ED8]'
+              }`} />
             </button>
           );
         })}
