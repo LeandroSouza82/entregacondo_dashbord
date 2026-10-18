@@ -1,6 +1,9 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { RouteMap } from './RouteMap';
 import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
+import { ClienteCondominioSearchInput } from './ClienteCondominioSearchInput';
+import type { ClienteEnderecoItem } from '../../features/routes/types/clienteEndereco';
+import { salvarClienteEndereco } from '../../features/routes/services/salvarClienteEndereco';
 import { 
   Check, 
   MessageSquare, 
@@ -168,6 +171,28 @@ export const NewRouteView: React.FC = () => {
 
   const motoristaSelecionado = MOTORISTAS.find(m => m.id === motoristaAtivo) || MOTORISTAS[0];
 
+  // Callback inteligente: ao selecionar um cliente/condomínio da base salva
+  const handleSelectClienteCondominio = useCallback((item: ClienteEnderecoItem) => {
+    setNomeCliente(item.nome_identificador);
+    if (item.destinatario_padrao) {
+      setBlocoApto(item.destinatario_padrao);
+    }
+    setEnderecoTexto(item.endereco_completo);
+    if (item.observacoes_acesso) {
+      setObservacaoTexto(item.observacoes_acesso);
+    }
+    const coords: PontoCoordenada = {
+      lat: Number(item.latitude),
+      lng: Number(item.longitude),
+    };
+    setCoordenadasSelecionadas(coords);
+    setPontoPreview({
+      nome: item.nome_identificador,
+      coordenadas: coords,
+    });
+    setErroValidacao(null);
+  }, []);
+
   // Callback memoizado para seleção de endereço via Google Places ou base salva (anti-loop)
   const handleAddressSelect = useCallback((dados: {
     enderecoCompleto: string;
@@ -180,10 +205,11 @@ export const NewRouteView: React.FC = () => {
     }
     setCoordenadasSelecionadas(dados.coordenadas);
     setPontoPreview({
-      nome: dados.nomeLocal || dados.enderecoCompleto,
+      nome: nomeCliente || dados.nomeLocal || dados.enderecoCompleto,
       coordenadas: dados.coordenadas,
     });
-  }, [blocoApto]);
+    setErroValidacao(null);
+  }, [blocoApto, nomeCliente]);
 
   const handleAdicionarEntrega = () => {
     if (!nomeCliente.trim() || !enderecoTexto.trim()) return;
@@ -196,7 +222,7 @@ export const NewRouteView: React.FC = () => {
 
     // Validação estrita de coordenadas: exige geocoding real do Google Places ou endereço salvo
     if (!coordenadasSelecionadas || (coordenadasSelecionadas.lat === 0 && coordenadasSelecionadas.lng === 0)) {
-      setErroValidacao('Por favor, selecione um endereço sugerido pelo Google Places com geocodificação válida. Endereços sem coordenadas exatas não podem ser despachados.');
+      setErroValidacao('Por favor, selecione um endereço sugerido pelo Google Places ou escolha um condomínio cadastrado na lista. Endereços sem coordenadas exatas não podem ser despachados.');
       return;
     }
 
@@ -219,6 +245,18 @@ export const NewRouteView: React.FC = () => {
     };
 
     setEntregasDaRota(prev => [...prev, nova]);
+
+    // Persistência inteligente: salva para as próximas entregas se selecionado
+    if (salvarParaProximas && coordenadasSelecionadas) {
+      salvarClienteEndereco({
+        empresa_id: motoristaSelecionado?.empresa_id,
+        nome_identificador: nomeCliente.trim(),
+        destinatario_padrao: blocoApto.trim() || undefined,
+        endereco_completo: enderecoTexto.trim(),
+        coordenadas: coordenadasSelecionadas,
+        observacoes_acesso: observacaoTexto.trim() || undefined,
+      }).catch((err) => console.warn('Erro ao salvar endereço em segundo plano:', err));
+    }
 
     setNomeCliente('');
     setBlocoApto('');
@@ -533,16 +571,18 @@ export const NewRouteView: React.FC = () => {
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-[#2B3A4F]">
-                Nome do cliente
-                <input
-                  type="text"
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[13px] font-semibold text-[#2B3A4F]">
+                  Nome do cliente / Condomínio
+                </label>
+                <ClienteCondominioSearchInput
                   value={nomeCliente}
-                  onChange={(e) => setNomeCliente(e.target.value)}
-                  placeholder="Ex: Maria Fernanda Rocha"
-                  className="h-11 border border-[#CBD5E1] rounded-[10px] px-3 text-sm text-[#0F1B2D] bg-white focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/20 focus:border-[#1D4ED8]"
+                  onChange={setNomeCliente}
+                  onSelectClienteEndereco={handleSelectClienteCondominio}
+                  placeholder="Ex: Condomínio Jardim América ou Maria Fernanda"
+                  empresaId={motoristaSelecionado?.empresa_id}
                 />
-              </label>
+              </div>
 
               <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-[#2B3A4F]">
                 Bloco / apartamento
@@ -618,10 +658,13 @@ export const NewRouteView: React.FC = () => {
                   onClick={() => {
                     setNomeCliente('');
                     setBlocoApto('');
+                    setEnderecoTexto('');
                     setObservacaoTexto('');
                     setTipoTarefa('entrega');
                     setEspecificacaoOutro('');
                     setErroValidacao(null);
+                    setCoordenadasSelecionadas(null);
+                    setPontoPreview(null);
                   }}
                   className="h-11 px-4 rounded-[10px] border border-[#CBD5E1] bg-white text-[#0F1B2D] text-sm font-bold hover:bg-slate-50 transition-colors"
                 >
