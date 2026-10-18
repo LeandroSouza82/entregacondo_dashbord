@@ -59,6 +59,14 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Quando o valor for limpo externamente, fecha o dropdown e reseta predições
+  useEffect(() => {
+    if (!value) {
+      setPredictions([]);
+      setIsOpen(false);
+    }
+  }, [value]);
+
   // Busca de sugestões de alta precisão via Google Places API (New)
   const fetchGooglePredictions = useCallback(async (query: string) => {
     if (!query.trim() || query.length < 2 || !GOOGLE_PLACES_KEY) {

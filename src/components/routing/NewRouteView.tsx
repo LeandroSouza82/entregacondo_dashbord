@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { RouteMap } from './RouteMap';
 import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
 import { ClienteCondominioSearchInput } from './ClienteCondominioSearchInput';
@@ -68,16 +68,19 @@ export const NewRouteView: React.FC = () => {
   const [dataRota, setDataRota] = useState<string>('Segunda, 19/10');
   const [pontoPartidaTexto, setPontoPartidaTexto] = useState<string>('Sede da administradora · Centro');
   
+  // Referência para focar naturalmente no campo "Nome do cliente / Condomínio"
+  const clienteInputRef = useRef<HTMLInputElement | null>(null);
+
   // Form Nova Entrega
   const [tipoTarefa, setTipoTarefa] = useState<'entrega' | 'coleta' | 'outros'>('entrega');
   const [especificacaoOutro, setEspecificacaoOutro] = useState<string>('');
   const [erroValidacao, setErroValidacao] = useState<string | null>(null);
-  const [nomeCliente, setNomeCliente] = useState<string>('Maria Fernanda Rocha');
-  const [blocoApto, setBlocoApto] = useState<string>('Bloco B · Apto 302');
-  const [enderecoTexto, setEnderecoTexto] = useState<string>('Rua Lauro Linhares, 820 · Trindade');
+  const [nomeCliente, setNomeCliente] = useState<string>('');
+  const [blocoApto, setBlocoApto] = useState<string>('');
+  const [enderecoTexto, setEnderecoTexto] = useState<string>('');
   const [coordenadasSelecionadas, setCoordenadasSelecionadas] = useState<PontoCoordenada | null>(null);
   const [pontoPreview, setPontoPreview] = useState<{ nome: string; coordenadas: PontoCoordenada } | null>(null);
-  const [observacaoTexto, setObservacaoTexto] = useState<string>('Cuidado com o cachorro. Entregar ao zelador.');
+  const [observacaoTexto, setObservacaoTexto] = useState<string>('');
   const [salvarParaProximas, setSalvarParaProximas] = useState<boolean>(true);
 
   // Alertas de feedback
@@ -260,6 +263,8 @@ export const NewRouteView: React.FC = () => {
 
     setNomeCliente('');
     setBlocoApto('');
+    setEnderecoTexto('');
+    setObservacaoTexto('');
     setTipoTarefa('entrega');
     setEspecificacaoOutro('');
     setErroValidacao(null);
@@ -268,6 +273,11 @@ export const NewRouteView: React.FC = () => {
     const labelTipo = tipoTarefa === 'coleta' ? 'Coleta' : tipoTarefa === 'outros' ? (nova.descricaoOutro || 'Outro serviço') : 'Entrega';
     setMensagemSucesso(`${labelTipo} para ${nova.destinatario} geolocalizada e adicionada à rota!`);
     setTimeout(() => setMensagemSucesso(null), 4000);
+
+    // Retorna o foco natural para o campo de busca de cliente/condomínio
+    setTimeout(() => {
+      clienteInputRef.current?.focus();
+    }, 50);
   };
 
   const handleChipClick = (texto: string) => {
@@ -576,6 +586,7 @@ export const NewRouteView: React.FC = () => {
                   Nome do cliente / Condomínio
                 </label>
                 <ClienteCondominioSearchInput
+                  inputRef={clienteInputRef}
                   value={nomeCliente}
                   onChange={setNomeCliente}
                   onSelectClienteEndereco={handleSelectClienteCondominio}
@@ -665,6 +676,7 @@ export const NewRouteView: React.FC = () => {
                     setErroValidacao(null);
                     setCoordenadasSelecionadas(null);
                     setPontoPreview(null);
+                    setTimeout(() => clienteInputRef.current?.focus(), 50);
                   }}
                   className="h-11 px-4 rounded-[10px] border border-[#CBD5E1] bg-white text-[#0F1B2D] text-sm font-bold hover:bg-slate-50 transition-colors"
                 >

@@ -10,6 +10,7 @@ interface ClienteCondominioSearchInputProps {
   placeholder?: string;
   empresaId?: string;
   disabled?: boolean;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
 export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInputProps> = ({
@@ -19,6 +20,7 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
   placeholder = 'Ex: Condomínio Jardim América ou Maria Fernanda',
   empresaId,
   disabled = false,
+  inputRef,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<number | null>(null);
@@ -39,6 +41,15 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Quando o valor for limpo externamente, reseta seleções pendentes e sugestões
+  useEffect(() => {
+    if (!value) {
+      setSelecionadoManual(false);
+      setSugestoes([]);
+      setIsOpen(false);
+    }
+  }, [value]);
 
   // Busca debounced no banco de dados local / Supabase
   const executarBusca = useCallback(async (termo: string) => {
@@ -113,6 +124,7 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
     <div ref={containerRef} className="relative w-full">
       <div className="relative">
         <input
+          ref={inputRef}
           type="text"
           value={value}
           onChange={handleInputChange}
