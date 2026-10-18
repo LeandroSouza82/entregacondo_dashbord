@@ -1,5 +1,5 @@
 import React, { useRef, useMemo, useEffect, useState, useCallback } from 'react';
-import Map, { Marker, Source, Layer, Popup, type MapRef } from 'react-map-gl/mapbox';
+import Map, { Marker, Source, Layer, Popup, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import type { Feature, LineString } from 'geojson';
 import { MapPin } from 'lucide-react';
@@ -68,7 +68,21 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     };
   }, [pontoPartida, paradas, pontoPreview, otimizado]);
 
-  // Layer styling memoizado
+  // Layer styling memoizado com contorno de alto contraste
+  const routeCasingStyle = useMemo(() => ({
+    id: 'route-line-casing',
+    type: 'line' as const,
+    layout: {
+      'line-join': 'round' as const,
+      'line-cap': 'round' as const,
+    },
+    paint: {
+      'line-color': '#FFFFFF',
+      'line-width': 7.5,
+      'line-opacity': 0.95,
+    },
+  }), []);
+
   const routeLayerStyle = useMemo(() => ({
     id: 'route-line',
     type: 'line' as const,
@@ -77,9 +91,9 @@ export const RouteMap: React.FC<RouteMapProps> = ({
       'line-cap': 'round' as const,
     },
     paint: {
-      'line-color': otimizado ? '#1D4ED8' : '#94A3B8',
+      'line-color': otimizado ? '#1D4ED8' : '#475569',
       'line-width': 4.5,
-      'line-opacity': 0.9,
+      'line-opacity': 1,
       ...(otimizado ? {} : { 'line-dasharray': [2, 2] }),
     },
   }), [otimizado]);
@@ -186,15 +200,18 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           ref={mapRef}
           initialViewState={initialViewState}
           mapboxAccessToken={MAPBOX_TOKEN}
-          mapStyle="mapbox://styles/mapbox/light-v11"
+          mapStyle="mapbox://styles/mapbox/streets-v12"
           reuseMaps
           attributionControl={false}
           style={{ width: '100%', height: '100%' }}
         >
-          {/* Rota Polyline */}
+          {/* Rota Polyline com Contorno de Alto Contraste */}
           <Source id="route-source" type="geojson" data={routeGeoJson}>
+            <Layer {...routeCasingStyle} />
             <Layer {...routeLayerStyle} />
           </Source>
+
+          <NavigationControl position="bottom-right" showCompass={false} />
 
           {/* Marcador Ponto de Partida */}
           <Marker

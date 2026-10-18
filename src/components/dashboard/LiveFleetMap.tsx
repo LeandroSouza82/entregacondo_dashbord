@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
-import Map, { Marker, Source, Layer, Popup, type MapRef } from 'react-map-gl/mapbox';
+import Map, { Marker, Source, Layer, Popup, NavigationControl, FullscreenControl, type MapRef } from 'react-map-gl/mapbox';
+import { Layers } from 'lucide-react';
 import type { FeatureCollection, LineString } from 'geojson';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
@@ -71,6 +72,22 @@ export const LiveFleetMap: React.FC = () => {
     parada: ParadaAoVivo;
     cor: string;
   } | null>(null);
+
+  // Estilo do Mapa com alto contraste e visibilidade definida
+  const [mapStyleType, setMapStyleType] = useState<'streets' | 'navigation' | 'satellite'>('streets');
+
+  const currentMapStyle = useMemo(() => {
+    switch (mapStyleType) {
+      case 'streets':
+        return 'mapbox://styles/mapbox/streets-v12';
+      case 'navigation':
+        return 'mapbox://styles/mapbox/navigation-day-v1';
+      case 'satellite':
+        return 'mapbox://styles/mapbox/satellite-streets-v12';
+      default:
+        return 'mapbox://styles/mapbox/streets-v12';
+    }
+  }, [mapStyleType]);
 
   // Filtra as rotas baseado no motorista selecionado
   const rotasFiltradas = useMemo(() => {
@@ -282,19 +299,74 @@ export const LiveFleetMap: React.FC = () => {
         </div>
       </div>
 
-      {/* Canvas Mapbox GL */}
-      <div className="w-full h-[360px] md:h-[400px] rounded-xl overflow-hidden border border-[#CBD5E1]/60 relative">
+      {/* Canvas Mapbox GL com Alto Contraste */}
+      <div className="w-full h-[360px] md:h-[400px] rounded-xl overflow-hidden border border-[#CBD5E1]/80 relative shadow-inner">
+        {/* Seletor Flutuante de Modo de Mapa */}
+        <div className="absolute top-3 right-3 z-10 bg-white/95 backdrop-blur-md p-1 rounded-xl shadow-lg border border-slate-200/90 flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-1 pl-1.5 pr-1 text-slate-400">
+            <Layers className="w-3.5 h-3.5" />
+          </div>
+          <button
+            type="button"
+            onClick={() => setMapStyleType('streets')}
+            className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+              mapStyleType === 'streets'
+                ? 'bg-[#0F1B2D] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            Ruas
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapStyleType('navigation')}
+            className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+              mapStyleType === 'navigation'
+                ? 'bg-[#0F1B2D] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            Navegação
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapStyleType('satellite')}
+            className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+              mapStyleType === 'satellite'
+                ? 'bg-[#0F1B2D] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            Satélite
+          </button>
+        </div>
+
         <Map
           ref={mapRef}
           initialViewState={initialViewState}
           mapboxAccessToken={MAPBOX_TOKEN}
-          mapStyle="mapbox://styles/mapbox/light-v11"
+          mapStyle={currentMapStyle}
           reuseMaps
           attributionControl={false}
           style={{ width: '100%', height: '100%' }}
         >
-          {/* Rotas dos Motoristas */}
+          {/* Rotas dos Motoristas com Contorno (Casing) para Alto Contraste */}
           <Source id="fleet-routes" type="geojson" data={routesGeoJson}>
+            {/* Contorno branco para separar a rota nitidamente das ruas e avenidas */}
+            <Layer
+              id="fleet-routes-casing"
+              type="line"
+              layout={{
+                'line-join': 'round',
+                'line-cap': 'round',
+              }}
+              paint={{
+                'line-color': '#FFFFFF',
+                'line-width': 7.5,
+                'line-opacity': 0.95,
+              }}
+            />
+            {/* Linha colorida do motorista */}
             <Layer
               id="fleet-routes-layer"
               type="line"
@@ -305,13 +377,17 @@ export const LiveFleetMap: React.FC = () => {
               paint={{
                 'line-color': ['get', 'cor'],
                 'line-width': 4.5,
-                'line-opacity': 0.85,
+                'line-opacity': 1,
               }}
             />
           </Source>
 
           {/* Marcadores Renderizados */}
           {renderedMarkers}
+
+          {/* Controles de Zoom e Tela Cheia */}
+          <NavigationControl position="bottom-right" showCompass={false} />
+          <FullscreenControl position="bottom-right" />
 
           {/* Popup ao Clicar em Qualquer Ponto */}
           {popupInfo && (
