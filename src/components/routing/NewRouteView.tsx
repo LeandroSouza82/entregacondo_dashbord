@@ -13,10 +13,16 @@ import {
   Inbox,
   FileText,
   AlertCircle,
-  ChevronDown
+  ChevronDown,
+  X
 } from 'lucide-react';
 import { BalanceteSelectorPopover } from './BalanceteSelectorPopover';
 import { DocumentosSelectorPopover } from './DocumentosSelectorPopover';
+import { 
+  obterChipsCustomizados, 
+  salvarChipCustomizado, 
+  removerChipCustomizado 
+} from '../../features/routes/services/chipsCustomizadosStorage';
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 
@@ -87,6 +93,7 @@ export const NewRouteView: React.FC = () => {
   const [salvarParaProximas, setSalvarParaProximas] = useState<boolean>(true);
   const [isBalanceteOpen, setIsBalanceteOpen] = useState<boolean>(false);
   const [isDocumentosOpen, setIsDocumentosOpen] = useState<boolean>(false);
+  const [chipsCustomizados, setChipsCustomizados] = useState<string[]>(() => obterChipsCustomizados());
 
   // Alertas de feedback
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
@@ -254,6 +261,11 @@ export const NewRouteView: React.FC = () => {
 
     setEntregasDaRota(prev => [...prev, nova]);
 
+    // Memória inteligente: se "outros" foi especificado, salva o termo como chip permanente
+    if (tipoTarefa === 'outros' && especificacaoOutro.trim()) {
+      setChipsCustomizados(salvarChipCustomizado(especificacaoOutro.trim()));
+    }
+
     // Persistência inteligente: salva para as próximas entregas se selecionado
     if (salvarParaProximas && coordenadasSelecionadas) {
       salvarClienteEndereco({
@@ -311,6 +323,21 @@ export const NewRouteView: React.FC = () => {
       if (prev.includes(texto)) return prev;
       return `${prev}. ${texto}`;
     });
+
+    // Se for um item personalizado, grava automaticamente na memória de chips
+    const ehPadrao = [
+      'edital de convocação',
+      'registro de ata',
+      'prestação de contas',
+      'convenção / regimento interno',
+      'boletos',
+      'documentos',
+      'outros documentos',
+    ].includes(nomeDocumento.toLowerCase());
+
+    if (!ehPadrao) {
+      setChipsCustomizados(salvarChipCustomizado(nomeDocumento));
+    }
   };
 
   const handleEnviarParaMotorista = async () => {
@@ -742,10 +769,57 @@ export const NewRouteView: React.FC = () => {
                         </button>
                       );
                     })}
+
+                    {/* Chips Personalizados Salvos na Memória Inteligente */}
+                    {chipsCustomizados.map((customChip) => (
+                      <div
+                        key={customChip}
+                        className="group inline-flex items-center h-[30px] rounded-full border border-purple-200 bg-purple-50 hover:bg-purple-100/90 text-purple-900 text-xs font-semibold transition-all shadow-2xs"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleChipClick(customChip)}
+                          className="pl-2.5 pr-1 py-1 flex items-center gap-1 cursor-pointer hover:text-purple-950"
+                          title={`Inserir "${customChip}" na observação`}
+                        >
+                          <span className="text-purple-600 font-bold">+</span>
+                          <span>{customChip}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setChipsCustomizados(removerChipCustomizado(customChip));
+                          }}
+                          className="pr-2 pl-0.5 py-1 text-purple-400 hover:text-red-600 transition-colors cursor-pointer rounded-r-full"
+                          title={`Remover "${customChip}" dos atalhos salvos`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  <span className="text-xs text-[#516074]">
-                    Aparece em destaque no app do motorista · {observacaoTexto.length}/200
-                  </span>
+
+                  <div className="flex items-center gap-2">
+                    {observacaoTexto.trim().length >= 3 && 
+                     observacaoTexto.trim().length <= 35 &&
+                     !CHIPS_OBSERVACOES.some(c => c.toLowerCase() === observacaoTexto.trim().toLowerCase()) &&
+                     !chipsCustomizados.some(c => c.toLowerCase() === observacaoTexto.trim().toLowerCase()) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setChipsCustomizados(salvarChipCustomizado(observacaoTexto.trim()));
+                        }}
+                        className="text-xs text-purple-700 font-bold hover:text-purple-900 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+                        title="Salvar esta observação como atalho permanente"
+                      >
+                        + Salvar como atalho
+                      </button>
+                    )}
+                    <span className="text-xs text-[#516074]">
+                      Aparece em destaque no app do motorista · {observacaoTexto.length}/200
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
