@@ -5,6 +5,8 @@ import {
   BarChart3, 
   Scale, 
   CreditCard, 
+  Folder,
+  Package,
   FolderPlus, 
   X, 
   ChevronRight,
@@ -63,11 +65,27 @@ const CATEGORIAS_DOCUMENTOS: CategoriaDocumento[] = [
   },
   {
     id: 'boletos',
-    nome: 'Boletos / Acordo Financeiro',
+    nome: 'Boletos',
     descricao: 'Cobranças, taxas e acordos de inadimplência',
     icone: CreditCard,
     corBg: 'bg-amber-50 border-amber-200',
     corTexto: 'text-amber-700',
+  },
+  {
+    id: 'documentos_generico',
+    nome: 'Documentos',
+    descricao: 'Entrega genérica de envelope ou papéis',
+    icone: Folder,
+    corBg: 'bg-slate-100 border-slate-200',
+    corTexto: 'text-slate-700',
+  },
+  {
+    id: 'outros_documentos',
+    nome: 'Outros documentos',
+    descricao: 'Demais itens documentais não listados',
+    icone: Package,
+    corBg: 'bg-teal-50 border-teal-200',
+    corTexto: 'text-teal-700',
   },
 ];
 
@@ -78,8 +96,8 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
   const containerRef = useRef<HTMLDivElement>(null);
   const outroInputRef = useRef<HTMLInputElement>(null);
 
-  const [mostrandoCampoOutro, setMostrandoCampoOutro] = useState<boolean>(false);
-  const [outroDocumentoTexto, setOutroDocumentoTexto] = useState<string>('');
+  const [mostrandoCampoPersonalizado, setMostrandoCampoPersonalizado] = useState<boolean>(false);
+  const [documentoCustomizadoTexto, setDocumentoCustomizadoTexto] = useState<string>('');
 
   // Fechar ao clicar fora ou tecla Escape
   useEffect(() => {
@@ -104,13 +122,13 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
 
   // Foco no campo personalizado se aberto
   useEffect(() => {
-    if (mostrandoCampoOutro) {
+    if (mostrandoCampoPersonalizado) {
       setTimeout(() => outroInputRef.current?.focus(), 50);
     }
-  }, [mostrandoCampoOutro]);
+  }, [mostrandoCampoPersonalizado]);
 
-  const handleConfirmarOutro = () => {
-    const finalTexto = outroDocumentoTexto.trim() || 'Outro Documento';
+  const handleConfirmarCustomizado = () => {
+    const finalTexto = documentoCustomizadoTexto.trim() || 'Outros documentos';
     onSelect(finalTexto);
   };
 
@@ -134,7 +152,7 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
         <button
           type="button"
           onClick={onClose}
-          className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 flex items-center justify-center transition-colors"
+          className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 flex items-center justify-center transition-colors cursor-pointer"
           title="Fechar"
         >
           <X className="w-4 h-4" />
@@ -142,7 +160,7 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
       </div>
 
       {/* Lista de Opções */}
-      <div className="p-2 space-y-1.5 max-h-[300px] overflow-y-auto">
+      <div className="p-2 space-y-1.5 max-h-[320px] overflow-y-auto">
         {CATEGORIAS_DOCUMENTOS.map((item) => {
           const Icone = item.icone;
 
@@ -186,37 +204,27 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
           );
         })}
 
-        {/* Opção "Outro Documento" com Campo Interativo */}
-        {!mostrandoCampoOutro ? (
+        {/* Opção para especificar termo customizado se necessário */}
+        {!mostrandoCampoPersonalizado ? (
           <button
             type="button"
-            onClick={() => setMostrandoCampoOutro(true)}
-            className="w-full text-left p-2.5 rounded-xl border border-dashed border-slate-200 hover:border-[#1D4ED8] hover:bg-slate-50 transition-all flex items-center justify-between group cursor-pointer"
+            onClick={() => setMostrandoCampoPersonalizado(true)}
+            className="w-full text-left p-2 rounded-xl border border-dashed border-slate-200 hover:border-[#1D4ED8] hover:bg-slate-50 transition-all flex items-center justify-between group cursor-pointer text-slate-500 hover:text-slate-700"
           >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-8 h-8 rounded-lg border border-slate-200 bg-slate-100 text-slate-600 flex items-center justify-center flex-shrink-0 shadow-2xs">
-                <FolderPlus className="w-4 h-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-[#0F1B2D] group-hover:text-[#1D4ED8] transition-colors leading-snug">
-                  Outro Documento
-                </div>
-                <div className="text-[11px] text-slate-500 truncate leading-tight">
-                  Especificar tipo ou notificação sob medida
-                </div>
-              </div>
+            <div className="flex items-center gap-2.5 text-xs font-medium">
+              <FolderPlus className="w-4 h-4 text-slate-400 group-hover:text-[#1D4ED8]" />
+              <span>Digitar outro nome personalizado...</span>
             </div>
-
-            <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[#1D4ED8] transition-all flex-shrink-0" />
+            <span className="text-[10px] text-slate-400">+ Escrever</span>
           </button>
         ) : (
           <div className="p-2.5 rounded-xl border border-blue-200 bg-blue-50/40 space-y-2 animate-fadeIn">
             <label className="text-[11px] font-bold text-[#1D4ED8] flex items-center justify-between">
-              <span>Especificar documento:</span>
+              <span>Digitar documento personalizado:</span>
               <button
                 type="button"
-                onClick={() => setMostrandoCampoOutro(false)}
-                className="text-slate-400 hover:text-slate-600 text-[10px] font-medium"
+                onClick={() => setMostrandoCampoPersonalizado(false)}
+                className="text-slate-400 hover:text-slate-600 text-[10px] font-medium cursor-pointer"
               >
                 Voltar
               </button>
@@ -225,12 +233,12 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
               <input
                 ref={outroInputRef}
                 type="text"
-                value={outroDocumentoTexto}
-                onChange={(e) => setOutroDocumentoTexto(e.target.value)}
+                value={documentoCustomizadoTexto}
+                onChange={(e) => setDocumentoCustomizadoTexto(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    handleConfirmarOutro();
+                    handleConfirmarCustomizado();
                   }
                 }}
                 placeholder="Ex: Notificação Extrajudicial, Laudo..."
@@ -238,7 +246,7 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
               />
               <button
                 type="button"
-                onClick={handleConfirmarOutro}
+                onClick={handleConfirmarCustomizado}
                 className="h-8 px-2.5 rounded-lg bg-[#1D4ED8] hover:bg-[#1E40AF] text-white text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
               >
                 <span>Inserir</span>
@@ -253,7 +261,7 @@ export const DocumentosSelectorPopover: React.FC<DocumentosSelectorPopoverProps>
       <div className="px-3.5 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
         <span>Formato inserido:</span>
         <code className="px-2 py-0.5 bg-white border border-slate-200 rounded font-semibold text-[#1D4ED8]">
-          Entrega de documento: [Nome]
+          [Nome do serviço selecionado]
         </code>
       </div>
     </div>

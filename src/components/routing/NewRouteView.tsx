@@ -305,7 +305,7 @@ export const NewRouteView: React.FC = () => {
   };
 
   const handleSelectDocumento = (nomeDocumento: string) => {
-    const texto = `Entrega de documento: ${nomeDocumento}`;
+    const texto = nomeDocumento;
     setObservacaoTexto(prev => {
       if (!prev) return texto;
       if (prev.includes(texto)) return prev;
