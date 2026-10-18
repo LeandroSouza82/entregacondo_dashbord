@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel do Gestor</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit}
+</style>
+
+</head>
+<body>
+
+
+<div style="display:flex;flex-wrap:wrap;min-height:1300px;background:#F3F5F8;color:#0F1B2D;font-family:'Plus Jakarta Sans',system-ui,sans-serif;font-size:14px;line-height:1.4">
+
+<aside style="flex:1 0 248px;max-width:248px;box-sizing:border-box;background:#0F1B2D;color:#FFFFFF;padding:24px 16px;display:flex;flex-direction:column;gap:28px">
+<div style="display:flex;align-items:center;gap:12px;padding:0 8px">
+<div style="width:38px;height:38px;border-radius:10px;background:#C2410C;display:flex;align-items:center;justify-content:center">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7z"></path><circle cx="7" cy="18" r="2"></circle><circle cx="17" cy="18" r="2"></circle></svg>
+</div>
+<div>
+<div style="font-weight:800;font-size:17px;line-height:1.1">EntregaCondo</div>
+<div style="font-size:12px;color:#9FB0C6;margin-top:2px">Painel do gestor</div>
+</div>
+</div>
+
+<nav aria-label="Principal" style="display:flex;flex-direction:column;gap:4px">
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;background:rgba(255,255,255,0.12);font-weight:700;color:#FFFFFF">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+Visão geral
+</a>
+<a href="NovaEntrega.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v8M8 12h8"></path></svg>
+Nova entrega
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="19" r="2.5"></circle><circle cx="18" cy="5" r="2.5"></circle><path d="M8.5 19H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"></path></svg>
+Rotas
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"></path></svg>
+Motoristas
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"></path><circle cx="12" cy="9.5" r="2.5"></circle></svg>
+Endereços salvos
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"></path><path d="M9 14l2 2 4-4"></path></svg>
+Comprovantes
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6"></path></svg>
+Relatórios
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg>
+Configurações
+</a>
+</nav>
+
+<div style="margin-top:auto;display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:rgba(255,255,255,0.07)">
+<div style="width:38px;height:38px;border-radius:50%;background:#2A4468;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">MA</div>
+<div>
+<div style="font-weight:700;font-size:14px">Mariana Alves</div>
+<div style="font-size:12px;color:#9FB0C6">Gestora de entregas</div>
+</div>
+</div>
+</aside>
+
+<main style="flex:999 1 560px;min-width:0;box-sizing:border-box;padding:28px 32px;display:flex;flex-direction:column;gap:24px">
+
+<header style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px">
+<div>
+<h1 style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.01em">Visão geral</h1>
+<p style="margin:4px 0 0;color:#516074;font-size:14px">Sábado, 17 de outubro · atualizado agora</p>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+<div style="display:flex;align-items:center;gap:8px;background:#FFFFFF;border:1px solid #D5DCE5;border-radius:10px;padding:0 12px;height:44px;min-width:260px;box-sizing:border-box">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#516074" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+<input type="text" placeholder="Buscar cliente, endereço ou pedido" aria-label="Buscar" style="border:0;outline:0;flex:1;min-width:0;font:inherit;font-size:14px;background:transparent;color:#0F1B2D">
+</div>
+<a href="NovaEntrega.dc.html" style="display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 18px;border-radius:10px;background:#C2410C;color:#FFFFFF;font-weight:700;font-size:14px;box-sizing:border-box">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+Nova entrega
+</a>
+</div>
+</header>
+
+<section aria-label="Indicadores do dia" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px">
+<div style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:13px;font-weight:600;color:#516074">Entregas hoje</div>
+<div style="font-size:30px;font-weight:800;line-height:1.1">48</div>
+<div style="font-size:12px;color:#14532D;font-weight:600">+6 em relação a ontem</div>
+</div>
+<div style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:13px;font-weight:600;color:#516074">Concluídas</div>
+<div style="font-size:30px;font-weight:800;line-height:1.1">31</div>
+<div style="height:6px;border-radius:3px;background:#E4E9F0;overflow:hidden;margin-top:2px"><div style="width:65%;height:100%;background:#15803D"></div></div>
+<div style="font-size:12px;color:#516074">65% do total do dia</div>
+</div>
+<div style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:13px;font-weight:600;color:#516074">Em rota agora</div>
+<div style="font-size:30px;font-weight:800;line-height:1.1">15</div>
+<div style="font-size:12px;color:#516074">3 motoristas em rota</div>
+</div>
+<div style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:13px;font-weight:600;color:#516074">Km economizados</div>
+<div style="font-size:30px;font-weight:800;line-height:1.1">38 km</div>
+<div style="font-size:12px;color:#516074">pela rota inteligente</div>
+</div>
+<div style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:6px">
+<div style="font-size:13px;font-weight:600;color:#516074">Ocorrências</div>
+<div style="font-size:30px;font-weight:800;line-height:1.1;color:#991B1B">2</div>
+<div style="font-size:12px;color:#991B1B;font-weight:600">exigem sua atenção</div>
+</div>
+</section>
+
+<div style="display:flex;flex-wrap:wrap;gap:24px;align-items:stretch">
+
+<section style="flex:2 1 520px;min-width:0;box-sizing:border-box;background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+<div style="display:flex;align-items:center;gap:10px">
+<h2 style="margin:0;font-size:17px;font-weight:800">Rotas em tempo real</h2>
+<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:#DDF3E4;color:#14532D;font-size:12px;font-weight:700"><span style="width:7px;height:7px;border-radius:50%;background:#15803D"></span>Ao vivo</span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px">
+<button type="button" style="height:32px;padding:0 12px;border-radius:999px;border:1px solid #0F1B2D;background:#0F1B2D;color:#FFFFFF;font-size:13px;font-weight:600;cursor:pointer">Todos</button>
+<button type="button" style="height:32px;padding:0 12px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#0F1B2D;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#1D4ED8"></span>Carlos</button>
+<button type="button" style="height:32px;padding:0 12px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#0F1B2D;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#0F766E"></span>Rafael</button>
+<button type="button" style="height:32px;padding:0 12px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#0F1B2D;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:#C2410C"></span>João Pedro</button>
+</div>
+</div>
+<svg viewBox="0 0 760 400" role="img" aria-label="Mapa ilustrativo com as rotas dos três motoristas em andamento" style="width:100%;height:auto;display:block;border-radius:12px">
+<rect width="760" height="400" fill="#E6ECF2"></rect>
+<path d="M0 0H760V70C650 95 560 60 440 85C300 115 160 80 0 110Z" fill="#CCE0EF"></path>
+<rect x="520" y="215" width="120" height="60" rx="12" fill="#D4E8D6"></rect>
+<rect x="150" y="205" width="130" height="62" rx="12" fill="#D4E8D6"></rect>
+<g stroke="#FFFFFF" stroke-width="10" fill="none" stroke-linecap="round">
+<path d="M0 170H760"></path><path d="M0 290H760"></path>
+<path d="M120 120V400"></path><path d="M300 100V400"></path><path d="M500 90V400"></path><path d="M660 80V400"></path>
+<path d="M0 370L760 240" stroke-width="7"></path>
+</g>
+<g aria-hidden="true" font-family="Plus Jakarta Sans, sans-serif" font-size="11" fill="#5B6B7F">
+<text x="330" y="162">Rua Lauro Linhares</text>
+<text x="20" y="282">Av. Madre Benvenuta</text>
+<text x="525" y="162">Rua Bocaiúva</text>
+</g>
+<g fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+<path d="M120 320V170H300V110" stroke="#1D4ED8"></path>
+<path d="M660 330V170H500V110" stroke="#0F766E"></path>
+<path d="M180 290H500V230" stroke="#C2410C"></path>
+</g>
+<g font-family="Plus Jakarta Sans, sans-serif" font-size="11" font-weight="700" text-anchor="middle">
+<circle cx="120" cy="320" r="12" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="120" y="324" fill="#FFFFFF">1</text>
+<circle cx="120" cy="170" r="12" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="120" y="174" fill="#FFFFFF">2</text>
+<circle cx="300" cy="170" r="19" fill="#1D4ED8" fill-opacity="0.2" stroke="#1D4ED8" stroke-opacity="0.4" stroke-width="2"></circle><circle cx="300" cy="170" r="12" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="300" y="174" fill="#FFFFFF">3</text>
+<circle cx="300" cy="110" r="12" fill="#FFFFFF" stroke="#1D4ED8" stroke-width="3"></circle><text x="300" y="114" fill="#1D4ED8">4</text>
+<circle cx="660" cy="330" r="12" fill="#0F766E" stroke="#FFFFFF" stroke-width="3"></circle><text x="660" y="334" fill="#FFFFFF">1</text>
+<circle cx="660" cy="170" r="12" fill="#0F766E" stroke="#FFFFFF" stroke-width="3"></circle><text x="660" y="174" fill="#FFFFFF">2</text>
+<circle cx="500" cy="170" r="19" fill="#0F766E" fill-opacity="0.2" stroke="#0F766E" stroke-opacity="0.4" stroke-width="2"></circle><circle cx="500" cy="170" r="12" fill="#0F766E" stroke="#FFFFFF" stroke-width="3"></circle><text x="500" y="174" fill="#FFFFFF">3</text>
+<circle cx="500" cy="110" r="12" fill="#FFFFFF" stroke="#0F766E" stroke-width="3"></circle><text x="500" y="114" fill="#0F766E">4</text>
+<circle cx="180" cy="290" r="12" fill="#C2410C" stroke="#FFFFFF" stroke-width="3"></circle><text x="180" y="294" fill="#FFFFFF">1</text>
+<circle cx="300" cy="290" r="19" fill="#C2410C" fill-opacity="0.2" stroke="#C2410C" stroke-opacity="0.4" stroke-width="2"></circle><circle cx="300" cy="290" r="12" fill="#C2410C" stroke="#FFFFFF" stroke-width="3"></circle><text x="300" y="294" fill="#FFFFFF">2</text>
+<circle cx="500" cy="290" r="12" fill="#FFFFFF" stroke="#C2410C" stroke-width="3"></circle><text x="500" y="294" fill="#C2410C">3</text>
+<circle cx="500" cy="230" r="12" fill="#FFFFFF" stroke="#C2410C" stroke-width="3"></circle><text x="500" y="234" fill="#C2410C">4</text>
+</g>
+</svg>
+<div style="display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:#516074">
+<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:50%;background:#516074"></span>Entrega concluída</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:50%;border:3px solid #516074;box-sizing:border-box"></span>Entrega pendente</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:50%;background:#516074;box-shadow:0 0 0 4px rgba(81,96,116,0.25)"></span>Posição atual do motorista</span>
+</div>
+</section>
+
+<section style="flex:1 1 340px;min-width:0;box-sizing:border-box;background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:4px">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+<h2 style="margin:0;font-size:17px;font-weight:800">Motoristas</h2>
+<a href="NovaEntrega.dc.html" style="font-size:13px;font-weight:700;color:#1D4ED8">Atribuir rota</a>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:10px;padding:14px 0;border-top:1px solid #EAEFF4">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;align-items:center;gap:10px">
+<div style="width:38px;height:38px;border-radius:50%;background:#1D4ED8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">CM</div>
+<div>
+<div style="font-weight:700">Carlos Mendes</div>
+<div style="font-size:12px;color:#516074">Fiorino · 12 entregas</div>
+</div>
+</div>
+<span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#DCE8FD;color:#1E3A8A">Em rota</span>
+</div>
+<div style="display:flex;align-items:center;gap:10px">
+<div style="flex:1;height:8px;border-radius:4px;background:#E4E9F0;overflow:hidden"><div style="width:67%;height:100%;background:#1D4ED8"></div></div>
+<div style="font-size:12px;font-weight:700;min-width:64px;text-align:right">8 de 12</div>
+</div>
+<div style="font-size:12px;color:#516074">Próxima: Rua Lauro Linhares, 820</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:10px;padding:14px 0;border-top:1px solid #EAEFF4">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;align-items:center;gap:10px">
+<div style="width:38px;height:38px;border-radius:50%;background:#0F766E;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">RS</div>
+<div>
+<div style="font-weight:700">Rafael Souza</div>
+<div style="font-size:12px;color:#516074">Moto · 14 entregas</div>
+</div>
+</div>
+<span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#DCE8FD;color:#1E3A8A">Em rota</span>
+</div>
+<div style="display:flex;align-items:center;gap:10px">
+<div style="flex:1;height:8px;border-radius:4px;background:#E4E9F0;overflow:hidden"><div style="width:79%;height:100%;background:#0F766E"></div></div>
+<div style="font-size:12px;font-weight:700;min-width:64px;text-align:right">11 de 14</div>
+</div>
+<div style="font-size:12px;color:#516074">Próxima: Rua Bocaiúva, 450</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:10px;padding:14px 0;border-top:1px solid #EAEFF4">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;align-items:center;gap:10px">
+<div style="width:38px;height:38px;border-radius:50%;background:#C2410C;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">JP</div>
+<div>
+<div style="font-weight:700">João Pedro Lima</div>
+<div style="font-size:12px;color:#516074">Saveiro · 12 entregas</div>
+</div>
+</div>
+<span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#DCE8FD;color:#1E3A8A">Em rota</span>
+</div>
+<div style="display:flex;align-items:center;gap:10px">
+<div style="flex:1;height:8px;border-radius:4px;background:#E4E9F0;overflow:hidden"><div style="width:58%;height:100%;background:#C2410C"></div></div>
+<div style="font-size:12px;font-weight:700;min-width:64px;text-align:right">7 de 12</div>
+</div>
+<div style="font-size:12px;color:#516074">Próxima: Av. Madre Benvenuta, 1100</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:10px;padding:14px 0;border-top:1px solid #EAEFF4">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;align-items:center;gap:10px">
+<div style="width:38px;height:38px;border-radius:50%;background:#475569;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">AC</div>
+<div>
+<div style="font-weight:700">Anderson Costa</div>
+<div style="font-size:12px;color:#516074">Moto · 10 entregas</div>
+</div>
+</div>
+<span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#E7EBF0;color:#334155">Em pausa</span>
+</div>
+<div style="display:flex;align-items:center;gap:10px">
+<div style="flex:1;height:8px;border-radius:4px;background:#E4E9F0;overflow:hidden"><div style="width:50%;height:100%;background:#475569"></div></div>
+<div style="font-size:12px;font-weight:700;min-width:64px;text-align:right">5 de 10</div>
+</div>
+<div style="font-size:12px;color:#516074">Próxima: Rua Felipe Schmidt, 1250</div>
+</div>
+
+</section>
+
+</div>
+
+<section style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+<h2 style="margin:0;font-size:17px;font-weight:800">Entregas de hoje</h2>
+<div style="display:flex;flex-wrap:wrap;gap:8px">
+<button type="button" style="height:34px;padding:0 14px;border-radius:999px;border:1px solid #0F1B2D;background:#0F1B2D;color:#FFFFFF;font-size:13px;font-weight:600;cursor:pointer">Todas 48</button>
+<button type="button" style="height:34px;padding:0 14px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#0F1B2D;font-size:13px;font-weight:600;cursor:pointer">Em rota 15</button>
+<button type="button" style="height:34px;padding:0 14px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#0F1B2D;font-size:13px;font-weight:600;cursor:pointer">Concluídas 31</button>
+<button type="button" style="height:34px;padding:0 14px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#0F1B2D;font-size:13px;font-weight:600;cursor:pointer">Ocorrências 2</button>
+</div>
+</div>
+<div style="overflow-x:auto">
+<div style="min-width:920px">
+<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr) 112px minmax(0,1.1fr);gap:16px;padding:10px 12px;background:#F3F5F8;border-radius:10px;font-size:12px;font-weight:700;color:#516074;text-transform:uppercase;letter-spacing:0.04em">
+<div>Cliente</div><div>Endereço</div><div>Motorista</div><div>Observação</div><div>Status</div><div>Recebido por</div>
+</div>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr) 112px minmax(0,1.1fr);gap:16px;padding:14px 12px;border-bottom:1px solid #EAEFF4;align-items:center">
+<div>
+<div style="font-weight:700">Ricardo Almeida</div>
+<div style="font-size:12px;color:#516074">Res. Vista Mar</div>
+</div>
+<div style="color:#2B3A4F">Av. Beira-Mar Norte, 3400 · Centro</div>
+<div style="color:#2B3A4F">Rafael Souza</div>
+<div style="color:#2B3A4F">Entregar ao zelador</div>
+<div><span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#DDF3E4;color:#14532D">Entregue</span></div>
+<div style="color:#2B3A4F">Zelador · Valdir</div>
+</div>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr) 112px minmax(0,1.1fr);gap:16px;padding:14px 12px;border-bottom:1px solid #EAEFF4;align-items:center">
+<div>
+<div style="font-weight:700">Maria Fernanda Rocha</div>
+<div style="font-size:12px;color:#516074">Ed. Solar das Palmeiras</div>
+</div>
+<div style="color:#2B3A4F">Rua Lauro Linhares, 820 · Trindade</div>
+<div style="color:#2B3A4F">Carlos Mendes</div>
+<div style="color:#2B3A4F">Cuidado com o cachorro</div>
+<div><span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#DCE8FD;color:#1E3A8A">Em rota</span></div>
+<div style="color:#2B3A4F">—</div>
+</div>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr) 112px minmax(0,1.1fr);gap:16px;padding:14px 12px;border-bottom:1px solid #EAEFF4;align-items:center">
+<div>
+<div style="font-weight:700">Paulo Henrique Dias</div>
+<div style="font-size:12px;color:#516074">Cond. Jardim Imperial</div>
+</div>
+<div style="color:#2B3A4F">Av. Madre Benvenuta, 1100 · Itacorubi</div>
+<div style="color:#2B3A4F">João Pedro Lima</div>
+<div style="color:#2B3A4F">Interfonar no apto 302</div>
+<div><span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#DCE8FD;color:#1E3A8A">Em rota</span></div>
+<div style="color:#2B3A4F">—</div>
+</div>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr) 112px minmax(0,1.1fr);gap:16px;padding:14px 12px;border-bottom:1px solid #EAEFF4;align-items:center">
+<div>
+<div style="font-weight:700">Camila Souza</div>
+<div style="font-size:12px;color:#516074">Ed. Bela Vista</div>
+</div>
+<div style="color:#2B3A4F">Rua Bocaiúva, 450 · Centro</div>
+<div style="color:#2B3A4F">Rafael Souza</div>
+<div style="color:#2B3A4F">Portaria atende só até 17h</div>
+<div><span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#DDF3E4;color:#14532D">Entregue</span></div>
+<div style="color:#2B3A4F">Vizinho · Apto 204</div>
+</div>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr) 112px minmax(0,1.1fr);gap:16px;padding:14px 12px;border-bottom:1px solid #EAEFF4;align-items:center">
+<div>
+<div style="font-weight:700">Fernando Lopes</div>
+<div style="font-size:12px;color:#516074">Res. Alameda Park</div>
+</div>
+<div style="color:#2B3A4F">Rua João Pio Duarte Silva, 900 · Córrego Grande</div>
+<div style="color:#2B3A4F">Anderson Costa</div>
+<div style="color:#2B3A4F">Sem observação</div>
+<div><span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#FBDADA;color:#7F1D1D">Ocorrência</span></div>
+<div style="color:#2B3A4F">Ninguém no local</div>
+</div>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr) 112px minmax(0,1.1fr);gap:16px;padding:14px 12px;border-bottom:1px solid #EAEFF4;align-items:center">
+<div>
+<div style="font-weight:700">Luciana Prado</div>
+<div style="font-size:12px;color:#516074">Ed. Marina Tower</div>
+</div>
+<div style="color:#2B3A4F">Rua Felipe Schmidt, 1250 · Centro</div>
+<div style="color:#2B3A4F">Anderson Costa</div>
+<div style="color:#2B3A4F">Deixar com o porteiro</div>
+<div><span style="display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:#FDEFC8;color:#7A4A06">Pendente</span></div>
+<div style="color:#2B3A4F">—</div>
+</div>
+
+</div>
+</div>
+</section>
+
+</main>
+</div>
+
+</body>
+</html>

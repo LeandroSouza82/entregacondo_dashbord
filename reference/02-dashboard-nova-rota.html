@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova Rota de Entregas</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit}
+</style>
+
+</head>
+<body>
+
+
+<div style="display:flex;flex-wrap:wrap;min-height:1450px;background:#F3F5F8;color:#0F1B2D;font-family:'Plus Jakarta Sans',system-ui,sans-serif;font-size:14px;line-height:1.4">
+
+<aside style="flex:1 0 248px;max-width:248px;box-sizing:border-box;background:#0F1B2D;color:#FFFFFF;padding:24px 16px;display:flex;flex-direction:column;gap:28px">
+<div style="display:flex;align-items:center;gap:12px;padding:0 8px">
+<div style="width:38px;height:38px;border-radius:10px;background:#C2410C;display:flex;align-items:center;justify-content:center">
+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7z"></path><circle cx="7" cy="18" r="2"></circle><circle cx="17" cy="18" r="2"></circle></svg>
+</div>
+<div>
+<div style="font-weight:800;font-size:17px;line-height:1.1">EntregaCondo</div>
+<div style="font-size:12px;color:#9FB0C6;margin-top:2px">Painel do gestor</div>
+</div>
+</div>
+
+<nav aria-label="Principal" style="display:flex;flex-direction:column;gap:4px">
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+Visão geral
+</a>
+<a href="NovaEntrega.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;background:rgba(255,255,255,0.12);font-weight:700;color:#FFFFFF">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v8M8 12h8"></path></svg>
+Nova entrega
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="19" r="2.5"></circle><circle cx="18" cy="5" r="2.5"></circle><path d="M8.5 19H15a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h6.5"></path></svg>
+Rotas
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"></path></svg>
+Motoristas
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"></path><circle cx="12" cy="9.5" r="2.5"></circle></svg>
+Endereços salvos
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"></path><path d="M9 14l2 2 4-4"></path></svg>
+Comprovantes
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6"></path></svg>
+Relatórios
+</a>
+<a href="Main.dc.html" style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;font-weight:600;color:#C3CFDD">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg>
+Configurações
+</a>
+</nav>
+
+<div style="margin-top:auto;display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;background:rgba(255,255,255,0.07)">
+<div style="width:38px;height:38px;border-radius:50%;background:#2A4468;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">MA</div>
+<div>
+<div style="font-weight:700;font-size:14px">Mariana Alves</div>
+<div style="font-size:12px;color:#9FB0C6">Gestora de entregas</div>
+</div>
+</div>
+</aside>
+
+<main style="flex:999 1 560px;min-width:0;box-sizing:border-box;padding:28px 32px;display:flex;flex-direction:column;gap:24px">
+
+<header style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px">
+<div>
+<h1 style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.01em">Nova rota de entregas</h1>
+<p style="margin:4px 0 0;color:#516074;font-size:14px">Cadastre as entregas, escolha o motorista e deixe o sistema montar a melhor rota.</p>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#2B3A4F">Data da rota
+<input type="text" value="Segunda, 19/10" style="height:44px;border:1px solid #CBD5E1;border-radius:10px;padding:0 12px;font:inherit;font-size:14px;color:#0F1B2D;background:#FFFFFF;width:150px;box-sizing:border-box">
+</label>
+</div>
+</header>
+
+<div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+
+<div style="flex:3 1 560px;min-width:0;display:flex;flex-direction:column;gap:24px">
+
+<section style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;align-items:center;gap:10px">
+<span style="width:26px;height:26px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">1</span>
+<h2 style="margin:0;font-size:17px;font-weight:800">Motorista</h2>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+<button type="button" style="text-align:left;display:flex;align-items:center;gap:12px;padding:14px;border-radius:12px;border:2px solid #1D4ED8;background:#EEF4FF;color:#0F1B2D;cursor:pointer">
+<span style="width:40px;height:40px;border-radius:50%;background:#1D4ED8;color:#FFFFFF;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">CM</span>
+<span><span style="display:block;font-weight:700;font-size:14px">Carlos Mendes</span><span style="display:block;font-size:12px;color:#334155">Fiorino · disponível</span></span>
+</button>
+<button type="button" style="text-align:left;display:flex;align-items:center;gap:12px;padding:14px;border-radius:12px;border:2px solid #E1E6ED;background:#FFFFFF;color:#0F1B2D;cursor:pointer">
+<span style="width:40px;height:40px;border-radius:50%;background:#0F766E;color:#FFFFFF;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">RS</span>
+<span><span style="display:block;font-weight:700;font-size:14px">Rafael Souza</span><span style="display:block;font-size:12px;color:#516074">Moto · disponível</span></span>
+</button>
+<button type="button" style="text-align:left;display:flex;align-items:center;gap:12px;padding:14px;border-radius:12px;border:2px solid #E1E6ED;background:#FFFFFF;color:#0F1B2D;cursor:pointer">
+<span style="width:40px;height:40px;border-radius:50%;background:#475569;color:#FFFFFF;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">AC</span>
+<span><span style="display:block;font-weight:700;font-size:14px">Anderson Costa</span><span style="display:block;font-size:12px;color:#516074">Moto · disponível</span></span>
+</button>
+</div>
+</section>
+
+<section style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;align-items:center;gap:10px">
+<span style="width:26px;height:26px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">2</span>
+<h2 style="margin:0;font-size:17px;font-weight:800">Adicionar entrega</h2>
+</div>
+<span style="font-size:12px;color:#516074">128 endereços salvos</span>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px">
+<label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:#2B3A4F">Nome do cliente
+<input type="text" value="Maria Fernanda Rocha" style="height:44px;border:1px solid #CBD5E1;border-radius:10px;padding:0 12px;font:inherit;font-size:14px;font-weight:400;color:#0F1B2D;background:#FFFFFF;width:100%;box-sizing:border-box">
+</label>
+<label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:#2B3A4F">Bloco / apartamento
+<input type="text" value="Bloco B · Apto 302" style="height:44px;border:1px solid #CBD5E1;border-radius:10px;padding:0 12px;font:inherit;font-size:14px;font-weight:400;color:#0F1B2D;background:#FFFFFF;width:100%;box-sizing:border-box">
+</label>
+
+<div style="grid-column:1 / -1;display:flex;flex-direction:column;gap:8px">
+<label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:#2B3A4F">Endereço
+<input type="text" value="Rua Lauro" style="height:44px;border:2px solid #1D4ED8;border-radius:10px;padding:0 12px;font:inherit;font-size:14px;font-weight:400;color:#0F1B2D;background:#FFFFFF;width:100%;box-sizing:border-box">
+</label>
+<div role="listbox" aria-label="Endereços salvos" style="border:1px solid #D5DCE5;border-radius:12px;background:#FFFFFF;box-shadow:0 8px 24px rgba(15,27,45,0.12);overflow:hidden">
+<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:#EEF4FF">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1D4ED8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"></path><circle cx="12" cy="9.5" r="2.5"></circle></svg>
+<div style="flex:1;min-width:0">
+<div style="font-weight:700">Rua Lauro Linhares, 820 · Trindade</div>
+<div style="font-size:12px;color:#516074">Ed. Solar das Palmeiras</div>
+</div>
+<span style="padding:3px 10px;border-radius:999px;background:#DDF3E4;color:#14532D;font-size:12px;font-weight:700;white-space:nowrap">Salvo · 14 entregas</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid #EAEFF4">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#516074" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21z"></path><circle cx="12" cy="9.5" r="2.5"></circle></svg>
+<div style="flex:1;min-width:0">
+<div style="font-weight:700">Rua Lauro Linhares, 1120 · Trindade</div>
+<div style="font-size:12px;color:#516074">Res. Lauro Park</div>
+</div>
+<span style="padding:3px 10px;border-radius:999px;background:#DDF3E4;color:#14532D;font-size:12px;font-weight:700;white-space:nowrap">Salvo · 3 entregas</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid #EAEFF4;background:#FAFBFC">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#516074" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+<div style="flex:1;min-width:0;font-size:13px;color:#2B3A4F">Usar um novo endereço · será salvo automaticamente para as próximas entregas</div>
+</div>
+</div>
+</div>
+
+<div style="grid-column:1 / -1;display:flex;flex-direction:column;gap:8px">
+<label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:#2B3A4F">Observação para o motorista
+<textarea rows="3" style="border:1px solid #CBD5E1;border-radius:10px;padding:10px 12px;font:inherit;font-size:14px;font-weight:400;color:#0F1B2D;background:#FFFFFF;width:100%;box-sizing:border-box;resize:vertical">Cuidado com o cachorro. Entregar ao zelador.</textarea>
+</label>
+<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;flex-wrap:wrap;gap:8px">
+<button type="button" style="height:30px;padding:0 12px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#2B3A4F;font-size:12px;font-weight:600;cursor:pointer">Cuidado com o cachorro</button>
+<button type="button" style="height:30px;padding:0 12px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#2B3A4F;font-size:12px;font-weight:600;cursor:pointer">Entregar ao zelador</button>
+<button type="button" style="height:30px;padding:0 12px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#2B3A4F;font-size:12px;font-weight:600;cursor:pointer">Interfonar antes</button>
+<button type="button" style="height:30px;padding:0 12px;border-radius:999px;border:1px solid #D5DCE5;background:#FFFFFF;color:#2B3A4F;font-size:12px;font-weight:600;cursor:pointer">Portaria só até 17h</button>
+</div>
+<span style="font-size:12px;color:#516074">Aparece em destaque no app do motorista · 44/200</span>
+</div>
+</div>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding-top:4px">
+<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#2B3A4F">
+<input type="checkbox" checked="" style="width:18px;height:18px;accent-color:#1D4ED8">
+Salvar este endereço para próximas entregas
+</label>
+<div style="display:flex;gap:12px">
+<button type="button" style="height:44px;padding:0 18px;border-radius:10px;border:1px solid #CBD5E1;background:#FFFFFF;color:#0F1B2D;font-size:14px;font-weight:700;cursor:pointer">Limpar</button>
+<button type="button" style="height:44px;padding:0 20px;border-radius:10px;border:0;background:#C2410C;color:#FFFFFF;font-size:14px;font-weight:700;cursor:pointer">Adicionar à rota</button>
+</div>
+</div>
+</section>
+
+<section style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
+<div style="display:flex;align-items:center;gap:10px">
+<span style="width:26px;height:26px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">3</span>
+<h2 style="margin:0;font-size:17px;font-weight:800">Entregas da rota · 20</h2>
+</div>
+<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;background:#DDF3E4;color:#14532D;font-size:12px;font-weight:700">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>
+Ordem otimizada
+</span>
+</div>
+
+<div style="display:flex;align-items:center;gap:14px;padding:12px 4px;border-top:1px solid #EAEFF4;flex-wrap:wrap">
+<div style="width:30px;height:30px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">1</div>
+<div style="flex:1 1 220px;min-width:0">
+<div style="font-weight:700">Ricardo Almeida <span style="font-weight:500;color:#516074">· Res. Vista Mar</span></div>
+<div style="font-size:13px;color:#2B3A4F">Av. Beira-Mar Norte, 3400 · Centro</div>
+</div>
+
+<div style="min-width:70px;text-align:right;font-size:13px;font-weight:700;color:#334155">Início</div>
+</div>
+
+<div style="display:flex;align-items:center;gap:14px;padding:12px 4px;border-top:1px solid #EAEFF4;flex-wrap:wrap">
+<div style="width:30px;height:30px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">2</div>
+<div style="flex:1 1 220px;min-width:0">
+<div style="font-weight:700">Luciana Prado <span style="font-weight:500;color:#516074">· Ed. Marina Tower</span></div>
+<div style="font-size:13px;color:#2B3A4F">Rua Felipe Schmidt, 1250 · Centro</div>
+</div>
+
+<div style="min-width:70px;text-align:right;font-size:13px;font-weight:700;color:#334155">0,9 km</div>
+</div>
+
+<div style="display:flex;align-items:center;gap:14px;padding:12px 4px;border-top:1px solid #EAEFF4;flex-wrap:wrap">
+<div style="width:30px;height:30px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">3</div>
+<div style="flex:1 1 220px;min-width:0">
+<div style="font-weight:700">Camila Souza <span style="font-weight:500;color:#516074">· Ed. Bela Vista</span></div>
+<div style="font-size:13px;color:#2B3A4F">Rua Bocaiúva, 450 · Centro</div>
+</div>
+
+<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:#FDEFC8;color:#7A4A06;font-size:12px;font-weight:700">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>
+Portaria só até 17h
+</span>
+
+<div style="min-width:70px;text-align:right;font-size:13px;font-weight:700;color:#334155">0,6 km</div>
+</div>
+
+<div style="display:flex;align-items:center;gap:14px;padding:12px 4px;border-top:1px solid #EAEFF4;flex-wrap:wrap">
+<div style="width:30px;height:30px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">4</div>
+<div style="flex:1 1 220px;min-width:0">
+<div style="font-weight:700">Maria Fernanda Rocha <span style="font-weight:500;color:#516074">· Ed. Solar das Palmeiras</span></div>
+<div style="font-size:13px;color:#2B3A4F">Rua Lauro Linhares, 820 · Trindade</div>
+</div>
+
+<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:#FDEFC8;color:#7A4A06;font-size:12px;font-weight:700">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>
+Cuidado com o cachorro
+</span>
+
+<div style="min-width:70px;text-align:right;font-size:13px;font-weight:700;color:#334155">4,1 km</div>
+</div>
+
+<div style="display:flex;align-items:center;gap:14px;padding:12px 4px;border-top:1px solid #EAEFF4;flex-wrap:wrap">
+<div style="width:30px;height:30px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">5</div>
+<div style="flex:1 1 220px;min-width:0">
+<div style="font-weight:700">Paulo Henrique Dias <span style="font-weight:500;color:#516074">· Cond. Jardim Imperial</span></div>
+<div style="font-size:13px;color:#2B3A4F">Av. Madre Benvenuta, 1100 · Itacorubi</div>
+</div>
+
+<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;background:#FDEFC8;color:#7A4A06;font-size:12px;font-weight:700">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"></path></svg>
+Interfonar no apto 302
+</span>
+
+<div style="min-width:70px;text-align:right;font-size:13px;font-weight:700;color:#334155">1,8 km</div>
+</div>
+
+<div style="display:flex;align-items:center;gap:14px;padding:12px 4px;border-top:1px solid #EAEFF4;flex-wrap:wrap">
+<div style="width:30px;height:30px;border-radius:50%;background:#0F1B2D;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none">6</div>
+<div style="flex:1 1 220px;min-width:0">
+<div style="font-weight:700">Fernando Lopes <span style="font-weight:500;color:#516074">· Res. Alameda Park</span></div>
+<div style="font-size:13px;color:#2B3A4F">Rua João Pio Duarte Silva, 900 · Córrego Grande</div>
+</div>
+
+<div style="min-width:70px;text-align:right;font-size:13px;font-weight:700;color:#334155">1,5 km</div>
+</div>
+
+<div style="border-top:1px solid #EAEFF4;padding-top:12px;font-size:13px;font-weight:700;color:#1D4ED8">+ 14 entregas · ver todas</div>
+</section>
+
+</div>
+
+<div style="flex:2 1 380px;min-width:0;display:flex;flex-direction:column;gap:24px">
+
+<section style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+<div>
+<h2 style="margin:0;font-size:17px;font-weight:800">Rota inteligente</h2>
+<p style="margin:4px 0 0;font-size:13px;color:#516074">Sempre segue para a entrega mais próxima, partindo do ponto inicial, para gastar menos tempo e km.</p>
+</div>
+<div role="switch" aria-checked="true" aria-label="Otimizar ordem automaticamente" style="flex:none;width:46px;height:26px;border-radius:13px;background:#15803D;padding:3px;box-sizing:border-box;display:flex;justify-content:flex-end"><div style="width:20px;height:20px;border-radius:50%;background:#FFFFFF"></div></div>
+</div>
+
+<label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:#2B3A4F">Ponto de partida
+<input type="text" value="Sede da administradora · Centro" style="height:44px;border:1px solid #CBD5E1;border-radius:10px;padding:0 12px;font:inherit;font-size:14px;font-weight:400;color:#0F1B2D;background:#FFFFFF;width:100%;box-sizing:border-box">
+</label>
+
+<svg viewBox="0 0 380 260" role="img" aria-label="Prévia ilustrativa da rota otimizada com oito paradas numeradas" style="width:100%;height:auto;display:block;border-radius:12px">
+<rect width="380" height="260" fill="#E6ECF2"></rect>
+<path d="M0 0H380V44C320 62 250 36 190 52C120 70 60 48 0 66Z" fill="#CCE0EF"></path>
+<rect x="150" y="170" width="60" height="50" rx="10" fill="#D4E8D6"></rect>
+<g stroke="#FFFFFF" stroke-width="9" fill="none" stroke-linecap="round">
+<path d="M0 150H380"></path><path d="M0 90H380"></path><path d="M0 220H380"></path>
+<path d="M50 70V260"></path><path d="M130 60V260"></path><path d="M230 60V260"></path><path d="M320 60V260"></path>
+</g>
+<path d="M50 220V150H130V90H230V170H320V60" fill="none" stroke="#1D4ED8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></path>
+<g font-family="Plus Jakarta Sans, sans-serif" font-size="10" font-weight="700" text-anchor="middle" fill="#FFFFFF">
+<rect x="38" y="208" width="24" height="24" rx="6" fill="#0F1B2D"></rect><text x="50" y="224">Início</text>
+<circle cx="50" cy="150" r="11" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="50" y="154">1</text>
+<circle cx="130" cy="150" r="11" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="130" y="154">2</text>
+<circle cx="130" cy="90" r="11" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="130" y="94">3</text>
+<circle cx="230" cy="90" r="11" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="230" y="94">4</text>
+<circle cx="230" cy="170" r="11" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="230" y="174">5</text>
+<circle cx="320" cy="170" r="11" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="320" y="174">6</text>
+<circle cx="320" cy="60" r="11" fill="#1D4ED8" stroke="#FFFFFF" stroke-width="3"></circle><text x="320" y="64">7</text>
+</g>
+</svg>
+
+<div style="display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;justify-content:space-between;font-size:13px"><span style="font-weight:600;color:#2B3A4F">Ordem de cadastro</span><span style="font-weight:700">74,2 km · 3h12</span></div>
+<div style="height:10px;border-radius:5px;background:#E4E9F0;overflow:hidden"><div style="width:100%;height:100%;background:#94A3B8"></div></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;justify-content:space-between;font-size:13px"><span style="font-weight:600;color:#2B3A4F">Rota otimizada</span><span style="font-weight:700">46,8 km · 2h05</span></div>
+<div style="height:10px;border-radius:5px;background:#E4E9F0;overflow:hidden"><div style="width:63%;height:100%;background:#15803D"></div></div>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:#DDF3E4;color:#14532D">
+<div style="font-size:24px;font-weight:800;line-height:1">37%</div>
+<div style="font-size:13px;font-weight:600">de economia: 27,4 km a menos e 1h07 de tempo ganho</div>
+</div>
+</div>
+</section>
+
+<section style="background:#FFFFFF;border:1px solid #E1E6ED;border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:12px">
+<button type="button" style="height:48px;border-radius:10px;border:0;background:#C2410C;color:#FFFFFF;font-size:15px;font-weight:700;cursor:pointer;width:100%">Enviar rota para Carlos</button>
+<button type="button" style="height:44px;border-radius:10px;border:1px solid #CBD5E1;background:#FFFFFF;color:#0F1B2D;font-size:14px;font-weight:700;cursor:pointer;width:100%">Salvar como rascunho</button>
+<p style="margin:0;font-size:12px;color:#516074;text-align:center">Carlos recebe a rota no app, já com endereços, observações e ordem de paradas.</p>
+</section>
+
+</div>
+
+</div>
+
+</main>
+</div>
+
+</body>
+</html>

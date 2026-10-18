@@ -1,0 +1,48 @@
+@import 'mapbox-gl/dist/mapbox-gl.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-surface text-slate-800 font-sans min-h-screen overflow-x-hidden;
+  }
+}
+
+/* Custom scrollbars para dashboards de alta densidade de informação */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Google Maps Autocomplete Dropdown styling */
+.pac-container {
+  z-index: 99999 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+  border: 1px solid #E2E8F0 !important;
+  font-family: 'Plus Jakarta Sans', sans-serif !important;
+  margin-top: 4px !important;
+}
+.pac-item {
+  padding: 8px 12px !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+}
+.pac-item:hover {
+  background-color: #EEF4FF !important;
+}
