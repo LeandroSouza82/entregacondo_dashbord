@@ -12,8 +12,10 @@ import {
   PackageCheck,
   Inbox,
   FileText,
-  AlertCircle
+  AlertCircle,
+  ChevronDown
 } from 'lucide-react';
+import { BalanceteSelectorPopover } from './BalanceteSelectorPopover';
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 
@@ -56,10 +58,10 @@ const ENDERECOS_SALVOS_EXEMPLO = [
 ];
 
 const CHIPS_OBSERVACOES = [
-  'Cuidado com o cachorro',
-  'Entregar ao zelador',
+  'Documentos',
+  'Balancete',
   'Interfonar antes',
-  'Portaria só até 17h',
+  'Portaria só até às 17h',
 ];
 
 export const NewRouteView: React.FC = () => {
@@ -82,6 +84,7 @@ export const NewRouteView: React.FC = () => {
   const [pontoPreview, setPontoPreview] = useState<{ nome: string; coordenadas: PontoCoordenada } | null>(null);
   const [observacaoTexto, setObservacaoTexto] = useState<string>('');
   const [salvarParaProximas, setSalvarParaProximas] = useState<boolean>(true);
+  const [isBalanceteOpen, setIsBalanceteOpen] = useState<boolean>(false);
 
   // Alertas de feedback
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
@@ -270,6 +273,7 @@ export const NewRouteView: React.FC = () => {
     setErroValidacao(null);
     setCoordenadasSelecionadas(null);
     setPontoPreview(null);
+    setIsBalanceteOpen(false);
     const labelTipo = tipoTarefa === 'coleta' ? 'Coleta' : tipoTarefa === 'outros' ? (nova.descricaoOutro || 'Outro serviço') : 'Entrega';
     setMensagemSucesso(`${labelTipo} para ${nova.destinatario} geolocalizada e adicionada à rota!`);
     setTimeout(() => setMensagemSucesso(null), 4000);
@@ -281,6 +285,15 @@ export const NewRouteView: React.FC = () => {
   };
 
   const handleChipClick = (texto: string) => {
+    setObservacaoTexto(prev => {
+      if (!prev) return texto;
+      if (prev.includes(texto)) return prev;
+      return `${prev}. ${texto}`;
+    });
+  };
+
+  const handleSelectBalancete = (mesAno: string) => {
+    const texto = `Balancete referente ao ${mesAno.toLowerCase()}`;
     setObservacaoTexto(prev => {
       if (!prev) return texto;
       if (prev.includes(texto)) return prev;
@@ -632,17 +645,52 @@ export const NewRouteView: React.FC = () => {
                 </label>
 
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap gap-2">
-                    {CHIPS_OBSERVACOES.map((chip, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => handleChipClick(chip)}
-                        className="h-[30px] px-3 rounded-full border border-[#D5DCE5] bg-white text-[#2B3A4F] text-xs font-semibold hover:bg-slate-50 transition-colors"
-                      >
-                        + {chip}
-                      </button>
-                    ))}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {CHIPS_OBSERVACOES.map((chip, i) => {
+                      if (chip === 'Balancete') {
+                        return (
+                          <div key={i} className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setIsBalanceteOpen(prev => !prev)}
+                              className={`h-[30px] px-3 rounded-full border text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                isBalanceteOpen
+                                  ? 'bg-blue-50 border-[#1D4ED8] text-[#1D4ED8] ring-2 ring-[#1D4ED8]/20 shadow-xs'
+                                  : 'border-[#D5DCE5] bg-white text-[#2B3A4F] hover:bg-slate-50'
+                              }`}
+                            >
+                              <span>+ Balancete</span>
+                              <ChevronDown
+                                className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
+                                  isBalanceteOpen ? 'rotate-180 text-[#1D4ED8]' : ''
+                                }`}
+                              />
+                            </button>
+
+                            {isBalanceteOpen && (
+                              <BalanceteSelectorPopover
+                                onClose={() => setIsBalanceteOpen(false)}
+                                onSelect={(mesAno) => {
+                                  handleSelectBalancete(mesAno);
+                                  setIsBalanceteOpen(false);
+                                }}
+                              />
+                            )}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => handleChipClick(chip)}
+                          className="h-[30px] px-3 rounded-full border border-[#D5DCE5] bg-white text-[#2B3A4F] text-xs font-semibold hover:bg-slate-50 transition-colors cursor-pointer"
+                        >
+                          + {chip}
+                        </button>
+                      );
+                    })}
                   </div>
                   <span className="text-xs text-[#516074]">
                     Aparece em destaque no app do motorista · {observacaoTexto.length}/200
@@ -676,6 +724,7 @@ export const NewRouteView: React.FC = () => {
                     setErroValidacao(null);
                     setCoordenadasSelecionadas(null);
                     setPontoPreview(null);
+                    setIsBalanceteOpen(false);
                     setTimeout(() => clienteInputRef.current?.focus(), 50);
                   }}
                   className="h-11 px-4 rounded-[10px] border border-[#CBD5E1] bg-white text-[#0F1B2D] text-sm font-bold hover:bg-slate-50 transition-colors"
