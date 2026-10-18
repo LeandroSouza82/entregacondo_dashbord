@@ -914,12 +914,17 @@ $$;
 -- FUNÇÃO SQL: aprovar_solicitacao_motorista.sql
 -- Aprovação auditada de motorista pela gestão da empresa.
 -- Atômica e consistente sob concorrência (FOR UPDATE).
--- Suporta:
---   Opção A: Criar cadastro de motorista novo a partir da solicitação real.
---   Opção B: Vincular a um cadastro existente desocupado da frota.
--- Valida autorização de gestão ANTES da resposta de idempotência.
--- Valida concorrência via p_revisao_esperada_veiculo.
--- Valida obrigatoriedades e impede aprovação indevida de veículos incompletos.
+--
+-- GARANTIAS:
+-- 1. Valida autorização do executor, existência de dados e condições de recusa
+--    (inclusive conferência de revisão de veículo e completude) ANTES de qualquer mutação.
+-- 2. Zero mutações parciais: em caso de recusa (ex: revisão desatualizada ou ausente),
+--    nenhum registro é inserido em motoristas, empresa_membros ou solicitacoes_acesso.
+-- 3. Idempotência e prevenção de duplicidades: retentativas após recusa ou chamadas
+--    repetidas não duplicam registros na frota de motoristas.
+-- 4. Separação explícita entre aprovação de vínculo e aprovação de veículo:
+--    Aprovar o vínculo não aprova automaticamente o veículo a menos que
+--    p_aprovar_veiculo = TRUE E a revisão esperada seja fornecida e conferida.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.aprovar_solicitacao_motorista(
@@ -928,6 +933,7 @@ CREATE OR REPLACE FUNCTION public.aprovar_solicitacao_motorista(
     p_criar_novo_motorista BOOLEAN DEFAULT FALSE,
     p_nome_motorista TEXT DEFAULT NULL,
     p_telefone_motorista VARCHAR DEFAULT NULL,
+    p_aprovar_veiculo BOOLEAN DEFAULT FALSE,
     p_revisao_esperada_veiculo INT DEFAULT NULL
 )
 RETURNS JSONB
@@ -940,6 +946,7 @@ DECLARE
     v_perfil RECORD;
     v_veiculo RECORD;
     v_motorista RECORD;
+    v_motorista_existente_id UUID;
     v_motorista_final_id UUID;
     v_nome_final TEXT;
     v_telefone_final VARCHAR(30);
@@ -947,7 +954,9 @@ DECLARE
     v_placa_final VARCHAR(20);
     v_validacao_veic JSONB;
 BEGIN
-    -- 1. Localiza e bloqueia a solicitação para concorrência
+    -- --------------------------------------------------------------------------
+    -- 1. LOCALIZAÇÃO E LOCK DA SOLICITAÇÃO (CONCORRÊNCIA SEGURA)
+    -- --------------------------------------------------------------------------
     SELECT * INTO v_solicitacao
     FROM public.solicitacoes_acesso
     WHERE id = p_solicitacao_id
@@ -961,8 +970,9 @@ BEGIN
         );
     END IF;
 
-    -- 2. Valida autorização do executor PRIMEIRO (gestor ou admin da empresa)
-    -- Impede vazamento de informações para chamadas não autorizadas
+    -- --------------------------------------------------------------------------
+    -- 2. VALIDAÇÃO DE AUTORIZAÇÃO ANTES DE QUALQUER LEITURA OU RESPOSTA
+    -- --------------------------------------------------------------------------
     IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id) THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
@@ -971,7 +981,9 @@ BEGIN
         );
     END IF;
 
-    -- 3. Idempotência autorizada: se já aprovada por esta empresa, retorna sucesso sem duplicar
+    -- --------------------------------------------------------------------------
+    -- 3. IDEMPOTÊNCIA AUTORIZADA (JÁ APROVADO PREVIAMENTE)
+    -- --------------------------------------------------------------------------
     IF v_solicitacao.status = 'aprovado' THEN
         RETURN jsonb_build_object(
             'sucesso', TRUE,
@@ -981,87 +993,11 @@ BEGIN
         );
     END IF;
 
-    -- 4. Definição do motorista (Opção A: Criar Novo | Opção B: Vincular Existente)
-    IF p_criar_novo_motorista THEN
-        -- Busca dados do perfil do usuário
-        SELECT * INTO v_perfil FROM public.perfis_usuarios WHERE id = v_solicitacao.user_id;
-        -- Busca veículo declarado se houver
-        SELECT * INTO v_veiculo FROM public.veiculos_motoristas WHERE user_id = v_solicitacao.user_id FOR UPDATE;
-
-        v_nome_final := COALESCE(NULLIF(TRIM(p_nome_motorista), ''), v_perfil.nome, 'Motorista Operacional');
-        v_telefone_final := COALESCE(NULLIF(TRIM(p_telefone_motorista), ''), v_perfil.telefone, '(00) 00000-0000');
-        v_modelo_final := CASE 
-            WHEN v_veiculo.id IS NOT NULL THEN (v_veiculo.marca || ' ' || v_veiculo.modelo)
-            ELSE 'Veículo Declarado'
-        END;
-        v_placa_final := COALESCE(v_veiculo.placa, 'SEM-PLACA');
-
-        -- Insere novo registro de motorista na frota da empresa
-        INSERT INTO public.motoristas (
-            empresa_id,
-            user_id,
-            nome,
-            telefone,
-            email,
-            veiculo_modelo,
-            veiculo_placa,
-            status,
-            ativo
-        ) VALUES (
-            v_solicitacao.empresa_id,
-            v_solicitacao.user_id,
-            v_nome_final,
-            v_telefone_final,
-            v_perfil.email,
-            v_modelo_final,
-            v_placa_final,
-            'disponivel',
-            TRUE
-        )
-        RETURNING id INTO v_motorista_final_id;
-
-        -- Validação condicional do veículo com conferência de revisão
-        IF v_veiculo.id IS NOT NULL THEN
-            IF p_revisao_esperada_veiculo IS NOT NULL AND v_veiculo.revisao != p_revisao_esperada_veiculo THEN
-                RETURN jsonb_build_object(
-                    'sucesso', FALSE,
-                    'codigo', 'REVISAO_DESATUALIZADA',
-                    'mensagem', 'O veículo do condutor foi alterado durante a análise (revisão atual: ' || v_veiculo.revisao || ', esperada: ' || p_revisao_esperada_veiculo || '). Atualize e revise a versão atual antes de aprovar.',
-                    'revisao_esperada', p_revisao_esperada_veiculo,
-                    'revisao_atual', v_veiculo.revisao
-                );
-            END IF;
-
-            v_validacao_veic := public.fn_validar_completude_veiculo(v_veiculo.id);
-
-            IF (v_validacao_veic->>'valido')::boolean = TRUE THEN
-                UPDATE public.veiculos_motoristas
-                SET status_analise = 'aprovado',
-                    revisao = revisao + 1,
-                    analisado_por = auth.uid(),
-                    analisado_em = timezone('utc'::text, now()),
-                    motivo_rejeicao = NULL,
-                    updated_at = timezone('utc'::text, now())
-                WHERE id = v_veiculo.id;
-
-                UPDATE public.veiculos_documentos
-                SET status_analise = 'aprovado',
-                    analisado_por = auth.uid(),
-                    analisado_em = timezone('utc'::text, now()),
-                    motivo_rejeicao = NULL,
-                    updated_at = timezone('utc'::text, now())
-                WHERE veiculo_id = v_veiculo.id;
-            ELSE
-                -- Veículo incompleto ou sem arquivo no Storage NÃO pode ser marcado como aprovado
-                UPDATE public.veiculos_motoristas
-                SET status_analise = 'pendente',
-                    updated_at = timezone('utc'::text, now())
-                WHERE id = v_veiculo.id;
-            END IF;
-        END IF;
-
-    ELSE
-        -- Opção B: Vinculação a cadastro pré-existente
+    -- --------------------------------------------------------------------------
+    -- 4. PRÉ-VALIDAÇÃO DA OPÇÃO DE VÍNCULO (SEM MUTAÇÕES)
+    -- --------------------------------------------------------------------------
+    IF NOT p_criar_novo_motorista THEN
+        -- Opção B: Vincular a motorista existente da frota
         IF p_motorista_id IS NULL THEN
             RETURN jsonb_build_object(
                 'sucesso', FALSE,
@@ -1091,8 +1027,120 @@ BEGIN
                 'mensagem', 'Este motorista já está vinculado a outro usuário.'
             );
         END IF;
+    END IF;
 
-        -- Atualiza o motorista existente com o user_id do condutor
+    -- --------------------------------------------------------------------------
+    -- 5. PRÉ-VALIDAÇÃO DO VEÍCULO (SE APROVAÇÃO DO VEÍCULO FOR SOLICITADA)
+    -- --------------------------------------------------------------------------
+    -- Busca veículo declarado se houver, com bloqueio FOR UPDATE
+    SELECT * INTO v_veiculo
+    FROM public.veiculos_motoristas
+    WHERE user_id = v_solicitacao.user_id
+    FOR UPDATE;
+
+    IF p_aprovar_veiculo THEN
+        IF v_veiculo.id IS NULL THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'VEICULO_NAO_ENCONTRADO',
+                'mensagem', 'O condutor não possui veículo declarado para aprovação.'
+            );
+        END IF;
+
+        -- Exige revisão obrigatoriamente
+        IF p_revisao_esperada_veiculo IS NULL THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'REVISAO_OBRIGATORIA',
+                'mensagem', 'A revisão esperada do veículo é obrigatória para aprovar o veículo.'
+            );
+        END IF;
+
+        -- Confere se a revisão confere com a visualizada pelo gestor
+        IF v_veiculo.revisao != p_revisao_esperada_veiculo THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'REVISAO_DESATUALIZADA',
+                'mensagem', 'O veículo do condutor foi alterado durante a análise (revisão atual: ' || v_veiculo.revisao || ', esperada: ' || p_revisao_esperada_veiculo || '). Atualize e revise a versão atual antes de decidir.',
+                'revisao_esperada', p_revisao_esperada_veiculo,
+                'revisao_atual', v_veiculo.revisao
+            );
+        END IF;
+
+        -- Valida completude (4 fotos distintas, CRLV e existência física no Storage)
+        v_validacao_veic := public.fn_validar_completude_veiculo(v_veiculo.id);
+        IF (v_validacao_veic->>'valido')::boolean != TRUE THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', v_validacao_veic->>'codigo',
+                'mensagem', 'Veículo não atende aos requisitos para aprovação: ' || (v_validacao_veic->>'mensagem')
+            );
+        END IF;
+    END IF;
+
+    -- --------------------------------------------------------------------------
+    -- 6. TODAS AS CONDIÇÕES FORAM APROVADAS -> EXECUTAR MUTAÇÕES ATÔMICAS
+    -- --------------------------------------------------------------------------
+
+    IF p_criar_novo_motorista THEN
+        -- Busca dados do perfil do usuário para compor dados do motorista
+        SELECT * INTO v_perfil FROM public.perfis_usuarios WHERE id = v_solicitacao.user_id;
+
+        v_nome_final := COALESCE(NULLIF(TRIM(p_nome_motorista), ''), v_perfil.nome, 'Motorista Operacional');
+        v_telefone_final := COALESCE(NULLIF(TRIM(p_telefone_motorista), ''), v_perfil.telefone, '(00) 00000-0000');
+        v_modelo_final := CASE 
+            WHEN v_veiculo.id IS NOT NULL THEN (v_veiculo.marca || ' ' || v_veiculo.modelo)
+            ELSE 'Veículo Declarado'
+        END;
+        v_placa_final := COALESCE(v_veiculo.placa, 'SEM-PLACA');
+
+        -- Previne duplicidade de cadastro na retentativa: busca se já existe motorista desta empresa para este user_id
+        SELECT id INTO v_motorista_existente_id
+        FROM public.motoristas
+        WHERE empresa_id = v_solicitacao.empresa_id
+          AND user_id = v_solicitacao.user_id
+        LIMIT 1;
+
+        IF v_motorista_existente_id IS NOT NULL THEN
+            UPDATE public.motoristas
+            SET nome = v_nome_final,
+                telefone = v_telefone_final,
+                email = v_perfil.email,
+                veiculo_modelo = v_modelo_final,
+                veiculo_placa = v_placa_final,
+                status = 'disponivel',
+                ativo = TRUE,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_motorista_existente_id;
+
+            v_motorista_final_id := v_motorista_existente_id;
+        ELSE
+            INSERT INTO public.motoristas (
+                empresa_id,
+                user_id,
+                nome,
+                telefone,
+                email,
+                veiculo_modelo,
+                veiculo_placa,
+                status,
+                ativo
+            ) VALUES (
+                v_solicitacao.empresa_id,
+                v_solicitacao.user_id,
+                v_nome_final,
+                v_telefone_final,
+                v_perfil.email,
+                v_modelo_final,
+                v_placa_final,
+                'disponivel',
+                TRUE
+            )
+            RETURNING id INTO v_motorista_final_id;
+        END IF;
+
+    ELSE
+        -- Opção B: vincula o motorista selecionado
         UPDATE public.motoristas
         SET user_id = v_solicitacao.user_id,
             ativo = TRUE,
@@ -1102,7 +1150,31 @@ BEGIN
         v_motorista_final_id := v_motorista.id;
     END IF;
 
-    -- 5. Atualiza a solicitação de acesso
+    -- --------------------------------------------------------------------------
+    -- 7. ATUALIZAÇÃO DO VEÍCULO (SE APROVAÇÃO FOI EXPLICITAMENTE CONCEDIDA)
+    -- --------------------------------------------------------------------------
+    IF p_aprovar_veiculo AND v_veiculo.id IS NOT NULL THEN
+        UPDATE public.veiculos_motoristas
+        SET status_analise = 'aprovado',
+            revisao = revisao + 1,
+            analisado_por = auth.uid(),
+            analisado_em = timezone('utc'::text, now()),
+            motivo_rejeicao = NULL,
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_veiculo.id;
+
+        UPDATE public.veiculos_documentos
+        SET status_analise = 'aprovado',
+            analisado_por = auth.uid(),
+            analisado_em = timezone('utc'::text, now()),
+            motivo_rejeicao = NULL,
+            updated_at = timezone('utc'::text, now())
+        WHERE veiculo_id = v_veiculo.id;
+    END IF;
+
+    -- --------------------------------------------------------------------------
+    -- 8. ATUALIZA A SOLICITAÇÃO DE ACESSO
+    -- --------------------------------------------------------------------------
     UPDATE public.solicitacoes_acesso
     SET status = 'aprovado',
         motorista_vinculado_id = v_motorista_final_id,
@@ -1112,7 +1184,9 @@ BEGIN
         updated_at = timezone('utc'::text, now())
     WHERE id = v_solicitacao.id;
 
-    -- 6. Insere ou atualiza o membro em empresa_membros
+    -- --------------------------------------------------------------------------
+    -- 9. INSERE OU ATUALIZA O MEMBRO EM EMPRESA_MEMBROS
+    -- --------------------------------------------------------------------------
     INSERT INTO public.empresa_membros (
         empresa_id,
         user_id,
@@ -1143,7 +1217,9 @@ BEGIN
         aprovado_em = timezone('utc'::text, now()),
         updated_at = timezone('utc'::text, now());
 
-    -- 7. Auditoria com revisão analisada
+    -- --------------------------------------------------------------------------
+    -- 10. AUDITORIA DA APROVAÇÃO
+    -- --------------------------------------------------------------------------
     INSERT INTO public.auditoria_acessos (
         empresa_id,
         user_id,
@@ -1168,8 +1244,8 @@ BEGIN
             'criou_novo_motorista', p_criar_novo_motorista,
             'motorista_id', v_motorista_final_id,
             'veiculo_id', CASE WHEN v_veiculo.id IS NOT NULL THEN v_veiculo.id ELSE NULL END,
-            'revisao_veiculo_analisada', p_revisao_esperada_veiculo,
-            'veiculo_aprovado', CASE WHEN v_validacao_veic IS NOT NULL THEN (v_validacao_veic->>'valido')::boolean ELSE FALSE END
+            'veiculo_aprovado', p_aprovar_veiculo,
+            'revisao_veiculo_analisada', p_revisao_esperada_veiculo
         )
     );
 
@@ -1177,7 +1253,8 @@ BEGIN
         'sucesso', TRUE,
         'codigo', 'APROVADO_COM_SUCESSO',
         'mensagem', 'Motorista aprovado e vinculado com sucesso.',
-        'motorista_id', v_motorista_final_id
+        'motorista_id', v_motorista_final_id,
+        'veiculo_aprovado', p_aprovar_veiculo
     );
 END;
 $$;
@@ -1824,6 +1901,15 @@ $$;
 -- Confirmação e vinculação de anexos (4 fotos por ângulo, CRLV ou complementar).
 -- Valida no servidor a existência real do objeto no storage.objects,
 -- o isolamento por empresa/usuário, tamanho, MIME type e limites operacionais.
+--
+-- COORDENAÇÃO DE CICLO DE VIDA DO STORAGE:
+-- 1. Impede vinculação de objeto cuja exclusão está autorizada ou em andamento
+--    (verificando status na tabela storage_limpeza_fila).
+-- 2. Na substituição de arquivo (novo CRLV ou nova foto para o mesmo ângulo),
+--    desvincula a evidência antiga e a enfileira atomicamente em storage_limpeza_fila
+--    com status 'pendente' para limpeza física via API do Storage.
+-- 3. A substituição ou vinculação incrementa a revisão do veículo e, se aprovado,
+--    reverte o status para 'pendente' com justificativa explícita.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.anexar_documento_veiculo(
@@ -1853,6 +1939,7 @@ DECLARE
     v_tamanho_real BIGINT;
     v_mime_real TEXT;
     v_old_storage_path TEXT;
+    v_fila_id UUID := NULL;
 BEGIN
     IF v_user_id IS NULL THEN
         RETURN jsonb_build_object(
@@ -1937,7 +2024,20 @@ BEGIN
         );
     END IF;
 
-    -- 4b. Previne reutilização ou colisão de caminho já vinculado a outro documento
+    -- 4b. Previne vinculação ou reutilização de objeto cuja exclusão foi autorizada ou está em andamento
+    IF EXISTS (
+        SELECT 1 FROM public.storage_limpeza_fila
+        WHERE storage_path = TRIM(p_storage_path)
+          AND status IN ('pendente', 'em_processamento', 'concluido')
+    ) THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'ARQUIVO_EM_LIMPEZA',
+            'mensagem', 'Este objeto do Storage está em processo de limpeza ou já foi descartado e não pode ser vinculado.'
+        );
+    END IF;
+
+    -- 4c. Previne reutilização ou colisão de caminho já vinculado a outro documento ativo
     IF EXISTS (
         SELECT 1 FROM public.veiculos_documentos
         WHERE storage_path = TRIM(p_storage_path)
@@ -1976,29 +2076,28 @@ BEGIN
         );
     END IF;
 
-        -- Validação cruzada de tamanho real reportado pelo Storage
-        IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'size') THEN
-            v_tamanho_real := (v_storage_meta->>'size')::bigint;
-            IF v_tamanho_real > 10485760 THEN
-                RETURN jsonb_build_object(
-                    'sucesso', FALSE,
-                    'codigo', 'TAMANHO_EXCEDIDO',
-                    'mensagem', 'O arquivo real excede o limite máximo permitido de 10 MB.'
-                );
-            END IF;
-            p_tamanho_bytes := v_tamanho_real::int;
+    -- Validação cruzada de tamanho real reportado pelo Storage
+    IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'size') THEN
+        v_tamanho_real := (v_storage_meta->>'size')::bigint;
+        IF v_tamanho_real > 10485760 THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'TAMANHO_EXCEDIDO',
+                'mensagem', 'O arquivo real excede o limite máximo permitido de 10 MB.'
+            );
         END IF;
+        p_tamanho_bytes := v_tamanho_real::int;
+    END IF;
 
-        -- Validação cruzada de MIME type reportado pelo Storage
-        IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'mimetype') THEN
-            v_mime_real := LOWER(v_storage_meta->>'mimetype');
-            IF v_mime_real NOT IN ('image/jpeg', 'image/png', 'application/pdf') THEN
-                RETURN jsonb_build_object(
-                    'sucesso', FALSE,
-                    'codigo', 'MIMETYPE_STORAGE_INVALIDO',
-                    'mensagem', 'Tipo de arquivo não permitido no bucket privado: ' || v_mime_real
-                );
-            END IF;
+    -- Validação cruzada de MIME type reportado pelo Storage
+    IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'mimetype') THEN
+        v_mime_real := LOWER(v_storage_meta->>'mimetype');
+        IF v_mime_real NOT IN ('image/jpeg', 'image/png', 'application/pdf') THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'MIMETYPE_STORAGE_INVALIDO',
+                'mensagem', 'Tipo de arquivo não permitido no bucket privado: ' || v_mime_real
+            );
         END IF;
     END IF;
 
@@ -2038,7 +2137,7 @@ BEGIN
 
     -- 8. Gerenciamento de Substituição e Limites
     IF p_tipo_documento = 'foto_veiculo' THEN
-        -- Substitui EXCLUSIVAMENTE a foto do mesmo ângulo, preservando os demais 3 ângulos
+        -- Localiza foto anterior do mesmo ângulo para desvinculação e limpeza
         SELECT storage_path INTO v_old_storage_path
         FROM public.veiculos_documentos
         WHERE veiculo_id = v_veiculo.id
@@ -2050,10 +2149,30 @@ BEGIN
             WHERE veiculo_id = v_veiculo.id
               AND tipo_documento = 'foto_veiculo'
               AND angulo_foto = p_angulo_foto;
+
+            -- Se o caminho for diferente, enfileira o antigo para limpeza segura
+            IF v_old_storage_path IS NOT NULL AND v_old_storage_path != TRIM(p_storage_path) THEN
+                INSERT INTO public.storage_limpeza_fila (
+                    bucket_id,
+                    storage_path,
+                    empresa_id,
+                    user_id,
+                    motivo,
+                    status
+                ) VALUES (
+                    'veiculos-documentos',
+                    v_old_storage_path,
+                    v_veiculo.empresa_id,
+                    v_user_id,
+                    'substituicao_foto_' || p_angulo_foto,
+                    'pendente'
+                )
+                RETURNING id INTO v_fila_id;
+            END IF;
         END IF;
 
     ELSIF p_tipo_documento = 'crlv' THEN
-        -- Substitui o CRLV anterior se houver
+        -- Localiza CRLV anterior para desvinculação e limpeza
         SELECT storage_path INTO v_old_storage_path
         FROM public.veiculos_documentos
         WHERE veiculo_id = v_veiculo.id
@@ -2063,6 +2182,26 @@ BEGIN
             DELETE FROM public.veiculos_documentos
             WHERE veiculo_id = v_veiculo.id
               AND tipo_documento = 'crlv';
+
+            -- Se o caminho for diferente, enfileira o antigo para limpeza segura
+            IF v_old_storage_path IS NOT NULL AND v_old_storage_path != TRIM(p_storage_path) THEN
+                INSERT INTO public.storage_limpeza_fila (
+                    bucket_id,
+                    storage_path,
+                    empresa_id,
+                    user_id,
+                    motivo,
+                    status
+                ) VALUES (
+                    'veiculos-documentos',
+                    v_old_storage_path,
+                    v_veiculo.empresa_id,
+                    v_user_id,
+                    'substituicao_crlv',
+                    'pendente'
+                )
+                RETURNING id INTO v_fila_id;
+            END IF;
         END IF;
 
     ELSIF p_tipo_documento = 'complementar' THEN
@@ -2129,7 +2268,9 @@ BEGIN
         'documento_id', v_doc_id,
         'angulo_foto', p_angulo_foto,
         'tipo_documento', p_tipo_documento,
-        'revisao', v_veiculo.revisao + 1
+        'revisao', v_veiculo.revisao + 1,
+        'arquivo_substituido_path', v_old_storage_path,
+        'limpeza_fila_id', v_fila_id
     );
 END;
 $$;
@@ -2141,8 +2282,15 @@ $$;
 -- ==============================================================================
 -- FUNÇÃO SQL: remover_documento_veiculo.sql
 -- Desvinculação autorizada e segura de documentos veiculares.
--- Se o veículo estiver 'aprovado', a remoção da evidência INVALIDA imediatamente
--- a aprovação, revertendo para 'pendente' e incrementando a revisão do veículo.
+--
+-- PROTOCOLO DE COORDENAÇÃO DE STORAGE:
+-- 1. Remove os metadados da tabela veiculos_documentos.
+-- 2. Insere atomicamente o storage_path na tabela storage_limpeza_fila com
+--    status 'pendente', autorizando formalmente o DELETE físico no Storage.
+-- 3. Se o veículo estiver 'aprovado', a remoção da evidência INVALIDA imediatamente
+--    a aprovação, revertendo para 'pendente' e incrementando a revisão do veículo.
+-- 4. Retorna fila_id e storage_path para que o cliente realize o DELETE físico
+--    e confirme o sucesso via RPC registrar_limpeza_storage_executada.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.remover_documento_veiculo(
@@ -2158,6 +2306,7 @@ DECLARE
     v_doc RECORD;
     v_veiculo RECORD;
     v_eh_gestor BOOLEAN := FALSE;
+    v_fila_id UUID;
 BEGIN
     IF v_user_id IS NULL THEN
         RETURN jsonb_build_object(
@@ -2209,7 +2358,25 @@ BEGIN
     -- 4. Remove a linha de metadados no Postgres
     DELETE FROM public.veiculos_documentos WHERE id = v_doc.id;
 
-    -- 5. Se o veículo já estava aprovado, a remoção INVALIDA a aprovação
+    -- 5. Enfileira o arquivo para limpeza física controlada
+    INSERT INTO public.storage_limpeza_fila (
+        bucket_id,
+        storage_path,
+        empresa_id,
+        user_id,
+        motivo,
+        status
+    ) VALUES (
+        'veiculos-documentos',
+        v_doc.storage_path,
+        v_doc.empresa_id,
+        v_user_id,
+        'remocao_documento_veiculo',
+        'pendente'
+    )
+    RETURNING id INTO v_fila_id;
+
+    -- 6. Se o veículo já estava aprovado, a remoção INVALIDA a aprovação
     IF v_veiculo.status_analise = 'aprovado' THEN
         UPDATE public.veiculos_motoristas
         SET status_analise = 'pendente',
@@ -2224,7 +2391,7 @@ BEGIN
         WHERE id = v_veiculo.id;
     END IF;
 
-    -- 6. Auditoria
+    -- 7. Auditoria da desvinculação
     INSERT INTO public.auditoria_acessos (
         empresa_id,
         user_id,
@@ -2247,16 +2414,19 @@ BEGIN
             'storage_path', v_doc.storage_path,
             'tipo_documento', v_doc.tipo_documento,
             'angulo_foto', v_doc.angulo_foto,
-            'eh_gestor', v_eh_gestor
+            'eh_gestor', v_eh_gestor,
+            'limpeza_fila_id', v_fila_id
         )
     );
 
     RETURN jsonb_build_object(
         'sucesso', TRUE,
         'codigo', 'DOCUMENTO_REMOVIDO',
-        'mensagem', 'Documento desvinculado com sucesso. Análise revertida para pendente.',
+        'mensagem', 'Documento desvinculado com sucesso e enfileirado para limpeza física.',
         'storage_path', v_doc.storage_path,
-        'veiculo_id', v_veiculo.id
+        'fila_id', v_fila_id,
+        'veiculo_id', v_veiculo.id,
+        'revisao', v_veiculo.revisao + 1
     );
 END;
 $$;
@@ -3329,23 +3499,25 @@ $$;
 
 -- ==============================================================================
 -- MODULO SQL: 04_storage.sql
--- Bucket privado e políticas de ciclo de vida seguro para fotos e documentos.
+-- Bucket privado, protocolo de coordenação de ciclo de vida e fila de limpeza.
 -- Bloqueia exclusão direta de qualquer evidência vinculada (pendente ou aprovada).
--- Bloqueia sobrescrita (UPDATE/upsert) de evidências vinculadas.
--- Permite exclusão autorizada de uploads temporários e arquivos desvinculados.
+-- Bloqueia sobrescrita (UPDATE/upsert) de evidências vinculadas ou em limpeza.
+-- Coordena desvinculação, substituição e limpeza física recuperável.
 --
 -- GARANTIAS OBTIDAS:
 -- 1. Toda evidência vinculada em veiculos_documentos está protegida contra
---    exclusão direta e sobrescrita pela API do Storage.
+--    exclusão direta e sobrescrita pela API do Storage via RLS em storage.objects.
 -- 2. Concorrência entre análise/aprovação e exclusão é neutralizada: a política
 --    impede o DELETE no Storage enquanto a linha persistir em veiculos_documentos.
--- 3. Apenas a RPC remover_documento_veiculo (ou substituição autorizada) desvincula
---    o arquivo no Postgres, rebaixa o veículo para 'pendente' e então autoriza a
---    remoção física pelo cliente.
--- 4. Uploads temporários não vinculados podem ser limpos pelo próprio condutor.
+-- 3. A desvinculação atômica em veiculos_documentos insere o objeto na tabela
+--    storage_limpeza_fila com status 'pendente'.
+-- 4. Apenas após a desvinculação a política RLS autoriza o DELETE físico pelo cliente.
+-- 5. Objetos marcados na fila de limpeza não podem ser reutilizados em novos anexos.
+-- 6. Falhas na limpeza física são registradas de forma persistente e recuperável
+--    na tabela storage_limpeza_fila para auditoria e retentativas.
 --
--- LIMITAÇÕES:
--- O Supabase Storage e o PostgreSQL não compartilham transação atômica 2PC.
+-- LIMITAÇÕES REAIS:
+-- O Supabase Storage e o PostgreSQL não compartilham transação distribuída 2PC.
 -- As regras são coordenadas via RLS em storage.objects. Acessos que utilizem a
 -- chave master service_role ou acessos diretos à infraestrutura de blocos (S3/disco)
 -- contornam o motor SQL e não são governados por estas políticas.
@@ -3365,7 +3537,104 @@ ON CONFLICT (id) DO UPDATE SET
     file_size_limit = 10485760,
     allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'application/pdf'];
 
--- 2. Políticas de Ciclo de Vida e Acesso no schema storage.objects
+-- 2. Fila persistente e auditável de limpeza do Storage
+CREATE TABLE IF NOT EXISTS public.storage_limpeza_fila (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    bucket_id VARCHAR(100) NOT NULL DEFAULT 'veiculos-documentos',
+    storage_path TEXT NOT NULL,
+    empresa_id UUID NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    motivo TEXT NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'pendente'
+        CHECK (status IN ('pendente', 'em_processamento', 'concluido', 'falhou')),
+    tentativas INT NOT NULL DEFAULT 0,
+    max_tentativas INT NOT NULL DEFAULT 5,
+    ultimo_erro TEXT,
+    autorizado_em TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    processado_em TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_limpeza_status_path 
+ON public.storage_limpeza_fila(status, storage_path);
+
+CREATE INDEX IF NOT EXISTS idx_storage_limpeza_empresa 
+ON public.storage_limpeza_fila(empresa_id, status);
+
+ALTER TABLE public.storage_limpeza_fila ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Gestores e condutores visualizam fila de limpeza da empresa" ON public.storage_limpeza_fila;
+CREATE POLICY "Gestores e condutores visualizam fila de limpeza da empresa"
+ON public.storage_limpeza_fila FOR SELECT
+TO authenticated
+USING (
+    public.fn_usuario_e_gestor_empresa(empresa_id) OR user_id = auth.uid()
+);
+
+-- 3. Função auditada para registrar resultado da limpeza física do Storage
+CREATE OR REPLACE FUNCTION public.registrar_limpeza_storage_executada(
+    p_fila_id UUID,
+    p_sucesso BOOLEAN,
+    p_erro TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_item RECORD;
+BEGIN
+    SELECT * INTO v_item
+    FROM public.storage_limpeza_fila
+    WHERE id = p_fila_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'ITEM_FILA_NAO_ENCONTRADO',
+            'mensagem', 'Item da fila de limpeza não encontrado.'
+        );
+    END IF;
+
+    -- Permissão: condutor proprietário do arquivo ou gestor da empresa
+    IF v_item.user_id != auth.uid() AND NOT public.fn_usuario_e_gestor_empresa(v_item.empresa_id) THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'ACESSO_NEGADO',
+            'mensagem', 'Sem permissão para registrar limpeza deste item.'
+        );
+    END IF;
+
+    IF p_sucesso THEN
+        UPDATE public.storage_limpeza_fila
+        SET status = 'concluido',
+            tentativas = tentativas + 1,
+            ultimo_erro = NULL,
+            processado_em = timezone('utc'::text, now()),
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_item.id;
+    ELSE
+        UPDATE public.storage_limpeza_fila
+        SET status = CASE WHEN tentativas + 1 >= max_tentativas THEN 'falhou' ELSE 'pendente' END,
+            tentativas = tentativas + 1,
+            ultimo_erro = p_erro,
+            processado_em = timezone('utc'::text, now()),
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_item.id;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'sucesso', TRUE,
+        'codigo', 'LIMPEZA_REGISTRADA',
+        'status', CASE WHEN p_sucesso THEN 'concluido' WHEN v_item.tentativas + 1 >= v_item.max_tentativas THEN 'falhou' ELSE 'pendente' END
+    );
+END;
+$$;
+
+-- 4. Políticas de Ciclo de Vida e Acesso no schema storage.objects
 
 -- POLÍTICA 1: Upload (INSERT) de evidências pelo condutor autorizado
 DROP POLICY IF EXISTS "Condutores enviam documentos do proprio veiculo" ON storage.objects;
@@ -3378,6 +3647,12 @@ WITH CHECK (
     public.fn_safe_uuid(split_part(name, '/', 1)) IS NOT NULL AND
     (
         (public.fn_validar_autorizacao_condutor(public.fn_safe_uuid(split_part(name, '/', 1)), auth.uid())->>'autorizado')::boolean = TRUE
+    ) AND
+    NOT EXISTS (
+        SELECT 1
+        FROM public.storage_limpeza_fila slf
+        WHERE slf.storage_path = name
+          AND slf.status IN ('pendente', 'em_processamento', 'concluido')
     )
 );
 
@@ -3396,8 +3671,7 @@ USING (
 );
 
 -- POLÍTICA 3: Alteração / Sobrescrita (UPDATE / upsert)
--- Bloqueia terminantemente a sobrescrita direta de qualquer evidência vinculada.
--- Um arquivo só pode ser atualizado se for um upload temporário ainda não vinculado.
+-- Bloqueia terminantemente a sobrescrita direta de qualquer evidência vinculada ou em fila de limpeza.
 DROP POLICY IF EXISTS "Atualizacao de documentos veiculares" ON storage.objects;
 CREATE POLICY "Atualizacao de documentos veiculares"
 ON storage.objects FOR UPDATE
@@ -3412,6 +3686,11 @@ USING (
         SELECT 1
         FROM public.veiculos_documentos vd
         WHERE vd.storage_path = name
+    ) AND
+    NOT EXISTS (
+        SELECT 1
+        FROM public.storage_limpeza_fila slf
+        WHERE slf.storage_path = name
     )
 )
 WITH CHECK (
@@ -3424,14 +3703,19 @@ WITH CHECK (
         SELECT 1
         FROM public.veiculos_documentos vd
         WHERE vd.storage_path = name
+    ) AND
+    NOT EXISTS (
+        SELECT 1
+        FROM public.storage_limpeza_fila slf
+        WHERE slf.storage_path = name
     )
 );
 
--- POLÍTICA 4: Exclusão (DELETE) com proteção de evidências vinculadas
--- Bloqueia a exclusão direta de QUALQUER evidência vinculada (pendente ou aprovada).
--- A exclusão é autorizada apenas para:
--- A) Uploads temporários do próprio condutor que ainda não foram vinculados via RPC.
--- B) Arquivos desvinculados previamente através da RPC remover_documento_veiculo ou substituição.
+-- POLÍTICA 4: Exclusão (DELETE) com protocolo coordenado de ciclo de vida
+-- Bloqueia a exclusão direta de QUALQUER evidência vinculada.
+-- A exclusão é autorizada apenas se o arquivo NÃO está vinculado em veiculos_documentos E:
+-- A) A exclusão física foi explicitamente autorizada na fila de limpeza (status pendente ou em_processamento), OU
+-- B) É um upload temporário do próprio condutor que nunca foi vinculado nem enfileirado.
 DROP POLICY IF EXISTS "Exclusao de documentos veiculares" ON storage.objects;
 CREATE POLICY "Exclusao de documentos veiculares"
 ON storage.objects FOR DELETE
@@ -3448,11 +3732,26 @@ USING (
         -- Gestor da empresa
         public.fn_usuario_e_gestor_empresa(public.fn_safe_uuid(split_part(name, '/', 1)))
     ) AND
-    -- PROTEÇÃO CRÍTICA: Bloqueia exclusão direta enquanto o arquivo estiver vinculado
+    -- PROTEÇÃO CRÍTICA 1: Bloqueia exclusão direta enquanto o arquivo estiver vinculado
     NOT EXISTS (
         SELECT 1
         FROM public.veiculos_documentos vd
         WHERE vd.storage_path = name
+    ) AND
+    -- PROTEÇÃO CRÍTICA 2: Coordenação do ciclo de limpeza
+    (
+        EXISTS (
+            SELECT 1
+            FROM public.storage_limpeza_fila slf
+            WHERE slf.storage_path = name
+              AND slf.status IN ('pendente', 'em_processamento')
+        )
+        OR
+        NOT EXISTS (
+            SELECT 1
+            FROM public.storage_limpeza_fila slf
+            WHERE slf.storage_path = name
+        )
     )
 );
 
@@ -3765,6 +4064,7 @@ GRANT UPDATE (nome, telefone, avatar_url) ON public.perfis_usuarios TO authentic
 DROP FUNCTION IF EXISTS public.anexar_documento_veiculo(UUID, TEXT, TEXT, TEXT, INT);
 DROP FUNCTION IF EXISTS public.analisar_veiculo_motorista(UUID, BOOLEAN, TEXT);
 DROP FUNCTION IF EXISTS public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR);
+DROP FUNCTION IF EXISTS public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR, INT);
 
 REVOKE EXECUTE ON FUNCTION public.fn_validar_autorizacao_condutor(UUID, UUID) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.fn_validar_completude_veiculo(UUID) FROM PUBLIC;
@@ -3772,7 +4072,8 @@ REVOKE EXECUTE ON FUNCTION public.cadastrar_meu_veiculo(JSONB) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.anexar_documento_veiculo(UUID, TEXT, TEXT, TEXT, INT, TEXT) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.remover_documento_veiculo(UUID) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.analisar_veiculo_motorista(UUID, BOOLEAN, INT, TEXT) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR, INT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR, BOOLEAN, INT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.registrar_limpeza_storage_executada(UUID, BOOLEAN, TEXT) FROM PUBLIC;
 
 -- 5. CONCESSÃO DE EXECUÇÃO NAS RPCS DE NEGÓCIO
 GRANT EXECUTE ON FUNCTION public.fn_safe_uuid(TEXT) TO authenticated;
@@ -3789,8 +4090,9 @@ GRANT EXECUTE ON FUNCTION public.solicitar_acesso_empresa(TEXT) TO authenticated
 GRANT EXECUTE ON FUNCTION public.cadastrar_meu_veiculo(JSONB) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.anexar_documento_veiculo(UUID, TEXT, TEXT, TEXT, INT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.remover_documento_veiculo(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.registrar_limpeza_storage_executada(UUID, BOOLEAN, TEXT) TO authenticated;
 
-GRANT EXECUTE ON FUNCTION public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR, INT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.aprovar_solicitacao_motorista(UUID, UUID, BOOLEAN, TEXT, VARCHAR, BOOLEAN, INT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.rejeitar_solicitacao_acesso(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.suspender_acesso_membro(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.reativar_acesso_membro(UUID) TO authenticated;

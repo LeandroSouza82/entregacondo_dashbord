@@ -1,8 +1,15 @@
 -- ==============================================================================
 -- FUNÇÃO SQL: remover_documento_veiculo.sql
 -- Desvinculação autorizada e segura de documentos veiculares.
--- Se o veículo estiver 'aprovado', a remoção da evidência INVALIDA imediatamente
--- a aprovação, revertendo para 'pendente' e incrementando a revisão do veículo.
+--
+-- PROTOCOLO DE COORDENAÇÃO DE STORAGE:
+-- 1. Remove os metadados da tabela veiculos_documentos.
+-- 2. Insere atomicamente o storage_path na tabela storage_limpeza_fila com
+--    status 'pendente', autorizando formalmente o DELETE físico no Storage.
+-- 3. Se o veículo estiver 'aprovado', a remoção da evidência INVALIDA imediatamente
+--    a aprovação, revertendo para 'pendente' e incrementando a revisão do veículo.
+-- 4. Retorna fila_id e storage_path para que o cliente realize o DELETE físico
+--    e confirme o sucesso via RPC registrar_limpeza_storage_executada.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.remover_documento_veiculo(
@@ -18,6 +25,7 @@ DECLARE
     v_doc RECORD;
     v_veiculo RECORD;
     v_eh_gestor BOOLEAN := FALSE;
+    v_fila_id UUID;
 BEGIN
     IF v_user_id IS NULL THEN
         RETURN jsonb_build_object(
@@ -69,7 +77,25 @@ BEGIN
     -- 4. Remove a linha de metadados no Postgres
     DELETE FROM public.veiculos_documentos WHERE id = v_doc.id;
 
-    -- 5. Se o veículo já estava aprovado, a remoção INVALIDA a aprovação
+    -- 5. Enfileira o arquivo para limpeza física controlada
+    INSERT INTO public.storage_limpeza_fila (
+        bucket_id,
+        storage_path,
+        empresa_id,
+        user_id,
+        motivo,
+        status
+    ) VALUES (
+        'veiculos-documentos',
+        v_doc.storage_path,
+        v_doc.empresa_id,
+        v_user_id,
+        'remocao_documento_veiculo',
+        'pendente'
+    )
+    RETURNING id INTO v_fila_id;
+
+    -- 6. Se o veículo já estava aprovado, a remoção INVALIDA a aprovação
     IF v_veiculo.status_analise = 'aprovado' THEN
         UPDATE public.veiculos_motoristas
         SET status_analise = 'pendente',
@@ -84,7 +110,7 @@ BEGIN
         WHERE id = v_veiculo.id;
     END IF;
 
-    -- 6. Auditoria
+    -- 7. Auditoria da desvinculação
     INSERT INTO public.auditoria_acessos (
         empresa_id,
         user_id,
@@ -107,16 +133,19 @@ BEGIN
             'storage_path', v_doc.storage_path,
             'tipo_documento', v_doc.tipo_documento,
             'angulo_foto', v_doc.angulo_foto,
-            'eh_gestor', v_eh_gestor
+            'eh_gestor', v_eh_gestor,
+            'limpeza_fila_id', v_fila_id
         )
     );
 
     RETURN jsonb_build_object(
         'sucesso', TRUE,
         'codigo', 'DOCUMENTO_REMOVIDO',
-        'mensagem', 'Documento desvinculado com sucesso. Análise revertida para pendente.',
+        'mensagem', 'Documento desvinculado com sucesso e enfileirado para limpeza física.',
         'storage_path', v_doc.storage_path,
-        'veiculo_id', v_veiculo.id
+        'fila_id', v_fila_id,
+        'veiculo_id', v_veiculo.id,
+        'revisao', v_veiculo.revisao + 1
     );
 END;
 $$;

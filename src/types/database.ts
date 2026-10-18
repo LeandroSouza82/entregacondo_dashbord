@@ -365,6 +365,42 @@ export interface Database {
         Update: Partial<Database['public']['Tables']['veiculos_documentos']['Insert']>
         Relationships: []
       }
+      storage_limpeza_fila: {
+        Row: {
+          id: string
+          bucket_id: string
+          storage_path: string
+          empresa_id: string
+          user_id: string
+          motivo: string
+          status: 'pendente' | 'em_processamento' | 'concluido' | 'falhou'
+          tentativas: number
+          max_tentativas: number
+          ultimo_erro: string | null
+          autorizado_em: string
+          processado_em: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          bucket_id?: string
+          storage_path: string
+          empresa_id: string
+          user_id: string
+          motivo: string
+          status?: 'pendente' | 'em_processamento' | 'concluido' | 'falhou'
+          tentativas?: number
+          max_tentativas?: number
+          ultimo_erro?: string | null
+          autorizado_em?: string
+          processado_em?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: Partial<Database['public']['Tables']['storage_limpeza_fila']['Insert']>
+        Relationships: []
+      }
       historico_atendimentos: {
         Row: {
           id: string
@@ -504,7 +540,16 @@ export interface Database {
           p_criar_novo_motorista?: boolean
           p_nome_motorista?: string | null
           p_telefone_motorista?: string | null
+          p_aprovar_veiculo?: boolean
           p_revisao_esperada_veiculo?: number | null
+        }
+        Returns: Json
+      }
+      registrar_limpeza_storage_executada: {
+        Args: {
+          p_fila_id: string
+          p_sucesso: boolean
+          p_erro?: string | null
         }
         Returns: Json
       }

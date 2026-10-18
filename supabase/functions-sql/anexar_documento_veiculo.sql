@@ -3,6 +3,15 @@
 -- Confirmação e vinculação de anexos (4 fotos por ângulo, CRLV ou complementar).
 -- Valida no servidor a existência real do objeto no storage.objects,
 -- o isolamento por empresa/usuário, tamanho, MIME type e limites operacionais.
+--
+-- COORDENAÇÃO DE CICLO DE VIDA DO STORAGE:
+-- 1. Impede vinculação de objeto cuja exclusão está autorizada ou em andamento
+--    (verificando status na tabela storage_limpeza_fila).
+-- 2. Na substituição de arquivo (novo CRLV ou nova foto para o mesmo ângulo),
+--    desvincula a evidência antiga e a enfileira atomicamente em storage_limpeza_fila
+--    com status 'pendente' para limpeza física via API do Storage.
+-- 3. A substituição ou vinculação incrementa a revisão do veículo e, se aprovado,
+--    reverte o status para 'pendente' com justificativa explícita.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.anexar_documento_veiculo(
@@ -32,6 +41,7 @@ DECLARE
     v_tamanho_real BIGINT;
     v_mime_real TEXT;
     v_old_storage_path TEXT;
+    v_fila_id UUID := NULL;
 BEGIN
     IF v_user_id IS NULL THEN
         RETURN jsonb_build_object(
@@ -116,7 +126,20 @@ BEGIN
         );
     END IF;
 
-    -- 4b. Previne reutilização ou colisão de caminho já vinculado a outro documento
+    -- 4b. Previne vinculação ou reutilização de objeto cuja exclusão foi autorizada ou está em andamento
+    IF EXISTS (
+        SELECT 1 FROM public.storage_limpeza_fila
+        WHERE storage_path = TRIM(p_storage_path)
+          AND status IN ('pendente', 'em_processamento', 'concluido')
+    ) THEN
+        RETURN jsonb_build_object(
+            'sucesso', FALSE,
+            'codigo', 'ARQUIVO_EM_LIMPEZA',
+            'mensagem', 'Este objeto do Storage está em processo de limpeza ou já foi descartado e não pode ser vinculado.'
+        );
+    END IF;
+
+    -- 4c. Previne reutilização ou colisão de caminho já vinculado a outro documento ativo
     IF EXISTS (
         SELECT 1 FROM public.veiculos_documentos
         WHERE storage_path = TRIM(p_storage_path)
@@ -155,29 +178,28 @@ BEGIN
         );
     END IF;
 
-        -- Validação cruzada de tamanho real reportado pelo Storage
-        IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'size') THEN
-            v_tamanho_real := (v_storage_meta->>'size')::bigint;
-            IF v_tamanho_real > 10485760 THEN
-                RETURN jsonb_build_object(
-                    'sucesso', FALSE,
-                    'codigo', 'TAMANHO_EXCEDIDO',
-                    'mensagem', 'O arquivo real excede o limite máximo permitido de 10 MB.'
-                );
-            END IF;
-            p_tamanho_bytes := v_tamanho_real::int;
+    -- Validação cruzada de tamanho real reportado pelo Storage
+    IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'size') THEN
+        v_tamanho_real := (v_storage_meta->>'size')::bigint;
+        IF v_tamanho_real > 10485760 THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'TAMANHO_EXCEDIDO',
+                'mensagem', 'O arquivo real excede o limite máximo permitido de 10 MB.'
+            );
         END IF;
+        p_tamanho_bytes := v_tamanho_real::int;
+    END IF;
 
-        -- Validação cruzada de MIME type reportado pelo Storage
-        IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'mimetype') THEN
-            v_mime_real := LOWER(v_storage_meta->>'mimetype');
-            IF v_mime_real NOT IN ('image/jpeg', 'image/png', 'application/pdf') THEN
-                RETURN jsonb_build_object(
-                    'sucesso', FALSE,
-                    'codigo', 'MIMETYPE_STORAGE_INVALIDO',
-                    'mensagem', 'Tipo de arquivo não permitido no bucket privado: ' || v_mime_real
-                );
-            END IF;
+    -- Validação cruzada de MIME type reportado pelo Storage
+    IF v_storage_meta IS NOT NULL AND (v_storage_meta ? 'mimetype') THEN
+        v_mime_real := LOWER(v_storage_meta->>'mimetype');
+        IF v_mime_real NOT IN ('image/jpeg', 'image/png', 'application/pdf') THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'MIMETYPE_STORAGE_INVALIDO',
+                'mensagem', 'Tipo de arquivo não permitido no bucket privado: ' || v_mime_real
+            );
         END IF;
     END IF;
 
@@ -217,7 +239,7 @@ BEGIN
 
     -- 8. Gerenciamento de Substituição e Limites
     IF p_tipo_documento = 'foto_veiculo' THEN
-        -- Substitui EXCLUSIVAMENTE a foto do mesmo ângulo, preservando os demais 3 ângulos
+        -- Localiza foto anterior do mesmo ângulo para desvinculação e limpeza
         SELECT storage_path INTO v_old_storage_path
         FROM public.veiculos_documentos
         WHERE veiculo_id = v_veiculo.id
@@ -229,10 +251,30 @@ BEGIN
             WHERE veiculo_id = v_veiculo.id
               AND tipo_documento = 'foto_veiculo'
               AND angulo_foto = p_angulo_foto;
+
+            -- Se o caminho for diferente, enfileira o antigo para limpeza segura
+            IF v_old_storage_path IS NOT NULL AND v_old_storage_path != TRIM(p_storage_path) THEN
+                INSERT INTO public.storage_limpeza_fila (
+                    bucket_id,
+                    storage_path,
+                    empresa_id,
+                    user_id,
+                    motivo,
+                    status
+                ) VALUES (
+                    'veiculos-documentos',
+                    v_old_storage_path,
+                    v_veiculo.empresa_id,
+                    v_user_id,
+                    'substituicao_foto_' || p_angulo_foto,
+                    'pendente'
+                )
+                RETURNING id INTO v_fila_id;
+            END IF;
         END IF;
 
     ELSIF p_tipo_documento = 'crlv' THEN
-        -- Substitui o CRLV anterior se houver
+        -- Localiza CRLV anterior para desvinculação e limpeza
         SELECT storage_path INTO v_old_storage_path
         FROM public.veiculos_documentos
         WHERE veiculo_id = v_veiculo.id
@@ -242,6 +284,26 @@ BEGIN
             DELETE FROM public.veiculos_documentos
             WHERE veiculo_id = v_veiculo.id
               AND tipo_documento = 'crlv';
+
+            -- Se o caminho for diferente, enfileira o antigo para limpeza segura
+            IF v_old_storage_path IS NOT NULL AND v_old_storage_path != TRIM(p_storage_path) THEN
+                INSERT INTO public.storage_limpeza_fila (
+                    bucket_id,
+                    storage_path,
+                    empresa_id,
+                    user_id,
+                    motivo,
+                    status
+                ) VALUES (
+                    'veiculos-documentos',
+                    v_old_storage_path,
+                    v_veiculo.empresa_id,
+                    v_user_id,
+                    'substituicao_crlv',
+                    'pendente'
+                )
+                RETURNING id INTO v_fila_id;
+            END IF;
         END IF;
 
     ELSIF p_tipo_documento = 'complementar' THEN
@@ -308,7 +370,9 @@ BEGIN
         'documento_id', v_doc_id,
         'angulo_foto', p_angulo_foto,
         'tipo_documento', p_tipo_documento,
-        'revisao', v_veiculo.revisao + 1
+        'revisao', v_veiculo.revisao + 1,
+        'arquivo_substituido_path', v_old_storage_path,
+        'limpeza_fila_id', v_fila_id
     );
 END;
 $$;

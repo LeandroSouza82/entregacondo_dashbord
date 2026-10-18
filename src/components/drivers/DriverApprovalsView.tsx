@@ -59,6 +59,7 @@ export const DriverApprovalsView: React.FC = () => {
     motoristaId?: string | null;
     nomeMotorista?: string;
     telefoneMotorista?: string;
+    aprovarVeiculo?: boolean;
     revisaoEsperadaVeiculo?: number | null;
   }) => {
     setProcessandoAcao(true);

@@ -2,12 +2,17 @@
 -- FUNÇÃO SQL: aprovar_solicitacao_motorista.sql
 -- Aprovação auditada de motorista pela gestão da empresa.
 -- Atômica e consistente sob concorrência (FOR UPDATE).
--- Suporta:
---   Opção A: Criar cadastro de motorista novo a partir da solicitação real.
---   Opção B: Vincular a um cadastro existente desocupado da frota.
--- Valida autorização de gestão ANTES da resposta de idempotência.
--- Valida concorrência via p_revisao_esperada_veiculo.
--- Valida obrigatoriedades e impede aprovação indevida de veículos incompletos.
+--
+-- GARANTIAS:
+-- 1. Valida autorização do executor, existência de dados e condições de recusa
+--    (inclusive conferência de revisão de veículo e completude) ANTES de qualquer mutação.
+-- 2. Zero mutações parciais: em caso de recusa (ex: revisão desatualizada ou ausente),
+--    nenhum registro é inserido em motoristas, empresa_membros ou solicitacoes_acesso.
+-- 3. Idempotência e prevenção de duplicidades: retentativas após recusa ou chamadas
+--    repetidas não duplicam registros na frota de motoristas.
+-- 4. Separação explícita entre aprovação de vínculo e aprovação de veículo:
+--    Aprovar o vínculo não aprova automaticamente o veículo a menos que
+--    p_aprovar_veiculo = TRUE E a revisão esperada seja fornecida e conferida.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.aprovar_solicitacao_motorista(
@@ -16,6 +21,7 @@ CREATE OR REPLACE FUNCTION public.aprovar_solicitacao_motorista(
     p_criar_novo_motorista BOOLEAN DEFAULT FALSE,
     p_nome_motorista TEXT DEFAULT NULL,
     p_telefone_motorista VARCHAR DEFAULT NULL,
+    p_aprovar_veiculo BOOLEAN DEFAULT FALSE,
     p_revisao_esperada_veiculo INT DEFAULT NULL
 )
 RETURNS JSONB
@@ -28,6 +34,7 @@ DECLARE
     v_perfil RECORD;
     v_veiculo RECORD;
     v_motorista RECORD;
+    v_motorista_existente_id UUID;
     v_motorista_final_id UUID;
     v_nome_final TEXT;
     v_telefone_final VARCHAR(30);
@@ -35,7 +42,9 @@ DECLARE
     v_placa_final VARCHAR(20);
     v_validacao_veic JSONB;
 BEGIN
-    -- 1. Localiza e bloqueia a solicitação para concorrência
+    -- --------------------------------------------------------------------------
+    -- 1. LOCALIZAÇÃO E LOCK DA SOLICITAÇÃO (CONCORRÊNCIA SEGURA)
+    -- --------------------------------------------------------------------------
     SELECT * INTO v_solicitacao
     FROM public.solicitacoes_acesso
     WHERE id = p_solicitacao_id
@@ -49,8 +58,9 @@ BEGIN
         );
     END IF;
 
-    -- 2. Valida autorização do executor PRIMEIRO (gestor ou admin da empresa)
-    -- Impede vazamento de informações para chamadas não autorizadas
+    -- --------------------------------------------------------------------------
+    -- 2. VALIDAÇÃO DE AUTORIZAÇÃO ANTES DE QUALQUER LEITURA OU RESPOSTA
+    -- --------------------------------------------------------------------------
     IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id) THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
@@ -59,7 +69,9 @@ BEGIN
         );
     END IF;
 
-    -- 3. Idempotência autorizada: se já aprovada por esta empresa, retorna sucesso sem duplicar
+    -- --------------------------------------------------------------------------
+    -- 3. IDEMPOTÊNCIA AUTORIZADA (JÁ APROVADO PREVIAMENTE)
+    -- --------------------------------------------------------------------------
     IF v_solicitacao.status = 'aprovado' THEN
         RETURN jsonb_build_object(
             'sucesso', TRUE,
@@ -69,87 +81,11 @@ BEGIN
         );
     END IF;
 
-    -- 4. Definição do motorista (Opção A: Criar Novo | Opção B: Vincular Existente)
-    IF p_criar_novo_motorista THEN
-        -- Busca dados do perfil do usuário
-        SELECT * INTO v_perfil FROM public.perfis_usuarios WHERE id = v_solicitacao.user_id;
-        -- Busca veículo declarado se houver
-        SELECT * INTO v_veiculo FROM public.veiculos_motoristas WHERE user_id = v_solicitacao.user_id FOR UPDATE;
-
-        v_nome_final := COALESCE(NULLIF(TRIM(p_nome_motorista), ''), v_perfil.nome, 'Motorista Operacional');
-        v_telefone_final := COALESCE(NULLIF(TRIM(p_telefone_motorista), ''), v_perfil.telefone, '(00) 00000-0000');
-        v_modelo_final := CASE 
-            WHEN v_veiculo.id IS NOT NULL THEN (v_veiculo.marca || ' ' || v_veiculo.modelo)
-            ELSE 'Veículo Declarado'
-        END;
-        v_placa_final := COALESCE(v_veiculo.placa, 'SEM-PLACA');
-
-        -- Insere novo registro de motorista na frota da empresa
-        INSERT INTO public.motoristas (
-            empresa_id,
-            user_id,
-            nome,
-            telefone,
-            email,
-            veiculo_modelo,
-            veiculo_placa,
-            status,
-            ativo
-        ) VALUES (
-            v_solicitacao.empresa_id,
-            v_solicitacao.user_id,
-            v_nome_final,
-            v_telefone_final,
-            v_perfil.email,
-            v_modelo_final,
-            v_placa_final,
-            'disponivel',
-            TRUE
-        )
-        RETURNING id INTO v_motorista_final_id;
-
-        -- Validação condicional do veículo com conferência de revisão
-        IF v_veiculo.id IS NOT NULL THEN
-            IF p_revisao_esperada_veiculo IS NOT NULL AND v_veiculo.revisao != p_revisao_esperada_veiculo THEN
-                RETURN jsonb_build_object(
-                    'sucesso', FALSE,
-                    'codigo', 'REVISAO_DESATUALIZADA',
-                    'mensagem', 'O veículo do condutor foi alterado durante a análise (revisão atual: ' || v_veiculo.revisao || ', esperada: ' || p_revisao_esperada_veiculo || '). Atualize e revise a versão atual antes de aprovar.',
-                    'revisao_esperada', p_revisao_esperada_veiculo,
-                    'revisao_atual', v_veiculo.revisao
-                );
-            END IF;
-
-            v_validacao_veic := public.fn_validar_completude_veiculo(v_veiculo.id);
-
-            IF (v_validacao_veic->>'valido')::boolean = TRUE THEN
-                UPDATE public.veiculos_motoristas
-                SET status_analise = 'aprovado',
-                    revisao = revisao + 1,
-                    analisado_por = auth.uid(),
-                    analisado_em = timezone('utc'::text, now()),
-                    motivo_rejeicao = NULL,
-                    updated_at = timezone('utc'::text, now())
-                WHERE id = v_veiculo.id;
-
-                UPDATE public.veiculos_documentos
-                SET status_analise = 'aprovado',
-                    analisado_por = auth.uid(),
-                    analisado_em = timezone('utc'::text, now()),
-                    motivo_rejeicao = NULL,
-                    updated_at = timezone('utc'::text, now())
-                WHERE veiculo_id = v_veiculo.id;
-            ELSE
-                -- Veículo incompleto ou sem arquivo no Storage NÃO pode ser marcado como aprovado
-                UPDATE public.veiculos_motoristas
-                SET status_analise = 'pendente',
-                    updated_at = timezone('utc'::text, now())
-                WHERE id = v_veiculo.id;
-            END IF;
-        END IF;
-
-    ELSE
-        -- Opção B: Vinculação a cadastro pré-existente
+    -- --------------------------------------------------------------------------
+    -- 4. PRÉ-VALIDAÇÃO DA OPÇÃO DE VÍNCULO (SEM MUTAÇÕES)
+    -- --------------------------------------------------------------------------
+    IF NOT p_criar_novo_motorista THEN
+        -- Opção B: Vincular a motorista existente da frota
         IF p_motorista_id IS NULL THEN
             RETURN jsonb_build_object(
                 'sucesso', FALSE,
@@ -179,8 +115,120 @@ BEGIN
                 'mensagem', 'Este motorista já está vinculado a outro usuário.'
             );
         END IF;
+    END IF;
 
-        -- Atualiza o motorista existente com o user_id do condutor
+    -- --------------------------------------------------------------------------
+    -- 5. PRÉ-VALIDAÇÃO DO VEÍCULO (SE APROVAÇÃO DO VEÍCULO FOR SOLICITADA)
+    -- --------------------------------------------------------------------------
+    -- Busca veículo declarado se houver, com bloqueio FOR UPDATE
+    SELECT * INTO v_veiculo
+    FROM public.veiculos_motoristas
+    WHERE user_id = v_solicitacao.user_id
+    FOR UPDATE;
+
+    IF p_aprovar_veiculo THEN
+        IF v_veiculo.id IS NULL THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'VEICULO_NAO_ENCONTRADO',
+                'mensagem', 'O condutor não possui veículo declarado para aprovação.'
+            );
+        END IF;
+
+        -- Exige revisão obrigatoriamente
+        IF p_revisao_esperada_veiculo IS NULL THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'REVISAO_OBRIGATORIA',
+                'mensagem', 'A revisão esperada do veículo é obrigatória para aprovar o veículo.'
+            );
+        END IF;
+
+        -- Confere se a revisão confere com a visualizada pelo gestor
+        IF v_veiculo.revisao != p_revisao_esperada_veiculo THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', 'REVISAO_DESATUALIZADA',
+                'mensagem', 'O veículo do condutor foi alterado durante a análise (revisão atual: ' || v_veiculo.revisao || ', esperada: ' || p_revisao_esperada_veiculo || '). Atualize e revise a versão atual antes de decidir.',
+                'revisao_esperada', p_revisao_esperada_veiculo,
+                'revisao_atual', v_veiculo.revisao
+            );
+        END IF;
+
+        -- Valida completude (4 fotos distintas, CRLV e existência física no Storage)
+        v_validacao_veic := public.fn_validar_completude_veiculo(v_veiculo.id);
+        IF (v_validacao_veic->>'valido')::boolean != TRUE THEN
+            RETURN jsonb_build_object(
+                'sucesso', FALSE,
+                'codigo', v_validacao_veic->>'codigo',
+                'mensagem', 'Veículo não atende aos requisitos para aprovação: ' || (v_validacao_veic->>'mensagem')
+            );
+        END IF;
+    END IF;
+
+    -- --------------------------------------------------------------------------
+    -- 6. TODAS AS CONDIÇÕES FORAM APROVADAS -> EXECUTAR MUTAÇÕES ATÔMICAS
+    -- --------------------------------------------------------------------------
+
+    IF p_criar_novo_motorista THEN
+        -- Busca dados do perfil do usuário para compor dados do motorista
+        SELECT * INTO v_perfil FROM public.perfis_usuarios WHERE id = v_solicitacao.user_id;
+
+        v_nome_final := COALESCE(NULLIF(TRIM(p_nome_motorista), ''), v_perfil.nome, 'Motorista Operacional');
+        v_telefone_final := COALESCE(NULLIF(TRIM(p_telefone_motorista), ''), v_perfil.telefone, '(00) 00000-0000');
+        v_modelo_final := CASE 
+            WHEN v_veiculo.id IS NOT NULL THEN (v_veiculo.marca || ' ' || v_veiculo.modelo)
+            ELSE 'Veículo Declarado'
+        END;
+        v_placa_final := COALESCE(v_veiculo.placa, 'SEM-PLACA');
+
+        -- Previne duplicidade de cadastro na retentativa: busca se já existe motorista desta empresa para este user_id
+        SELECT id INTO v_motorista_existente_id
+        FROM public.motoristas
+        WHERE empresa_id = v_solicitacao.empresa_id
+          AND user_id = v_solicitacao.user_id
+        LIMIT 1;
+
+        IF v_motorista_existente_id IS NOT NULL THEN
+            UPDATE public.motoristas
+            SET nome = v_nome_final,
+                telefone = v_telefone_final,
+                email = v_perfil.email,
+                veiculo_modelo = v_modelo_final,
+                veiculo_placa = v_placa_final,
+                status = 'disponivel',
+                ativo = TRUE,
+                updated_at = timezone('utc'::text, now())
+            WHERE id = v_motorista_existente_id;
+
+            v_motorista_final_id := v_motorista_existente_id;
+        ELSE
+            INSERT INTO public.motoristas (
+                empresa_id,
+                user_id,
+                nome,
+                telefone,
+                email,
+                veiculo_modelo,
+                veiculo_placa,
+                status,
+                ativo
+            ) VALUES (
+                v_solicitacao.empresa_id,
+                v_solicitacao.user_id,
+                v_nome_final,
+                v_telefone_final,
+                v_perfil.email,
+                v_modelo_final,
+                v_placa_final,
+                'disponivel',
+                TRUE
+            )
+            RETURNING id INTO v_motorista_final_id;
+        END IF;
+
+    ELSE
+        -- Opção B: vincula o motorista selecionado
         UPDATE public.motoristas
         SET user_id = v_solicitacao.user_id,
             ativo = TRUE,
@@ -190,7 +238,31 @@ BEGIN
         v_motorista_final_id := v_motorista.id;
     END IF;
 
-    -- 5. Atualiza a solicitação de acesso
+    -- --------------------------------------------------------------------------
+    -- 7. ATUALIZAÇÃO DO VEÍCULO (SE APROVAÇÃO FOI EXPLICITAMENTE CONCEDIDA)
+    -- --------------------------------------------------------------------------
+    IF p_aprovar_veiculo AND v_veiculo.id IS NOT NULL THEN
+        UPDATE public.veiculos_motoristas
+        SET status_analise = 'aprovado',
+            revisao = revisao + 1,
+            analisado_por = auth.uid(),
+            analisado_em = timezone('utc'::text, now()),
+            motivo_rejeicao = NULL,
+            updated_at = timezone('utc'::text, now())
+        WHERE id = v_veiculo.id;
+
+        UPDATE public.veiculos_documentos
+        SET status_analise = 'aprovado',
+            analisado_por = auth.uid(),
+            analisado_em = timezone('utc'::text, now()),
+            motivo_rejeicao = NULL,
+            updated_at = timezone('utc'::text, now())
+        WHERE veiculo_id = v_veiculo.id;
+    END IF;
+
+    -- --------------------------------------------------------------------------
+    -- 8. ATUALIZA A SOLICITAÇÃO DE ACESSO
+    -- --------------------------------------------------------------------------
     UPDATE public.solicitacoes_acesso
     SET status = 'aprovado',
         motorista_vinculado_id = v_motorista_final_id,
@@ -200,7 +272,9 @@ BEGIN
         updated_at = timezone('utc'::text, now())
     WHERE id = v_solicitacao.id;
 
-    -- 6. Insere ou atualiza o membro em empresa_membros
+    -- --------------------------------------------------------------------------
+    -- 9. INSERE OU ATUALIZA O MEMBRO EM EMPRESA_MEMBROS
+    -- --------------------------------------------------------------------------
     INSERT INTO public.empresa_membros (
         empresa_id,
         user_id,
@@ -231,7 +305,9 @@ BEGIN
         aprovado_em = timezone('utc'::text, now()),
         updated_at = timezone('utc'::text, now());
 
-    -- 7. Auditoria com revisão analisada
+    -- --------------------------------------------------------------------------
+    -- 10. AUDITORIA DA APROVAÇÃO
+    -- --------------------------------------------------------------------------
     INSERT INTO public.auditoria_acessos (
         empresa_id,
         user_id,
@@ -256,8 +332,8 @@ BEGIN
             'criou_novo_motorista', p_criar_novo_motorista,
             'motorista_id', v_motorista_final_id,
             'veiculo_id', CASE WHEN v_veiculo.id IS NOT NULL THEN v_veiculo.id ELSE NULL END,
-            'revisao_veiculo_analisada', p_revisao_esperada_veiculo,
-            'veiculo_aprovado', CASE WHEN v_validacao_veic IS NOT NULL THEN (v_validacao_veic->>'valido')::boolean ELSE FALSE END
+            'veiculo_aprovado', p_aprovar_veiculo,
+            'revisao_veiculo_analisada', p_revisao_esperada_veiculo
         )
     );
 
@@ -265,7 +341,8 @@ BEGIN
         'sucesso', TRUE,
         'codigo', 'APROVADO_COM_SUCESSO',
         'mensagem', 'Motorista aprovado e vinculado com sucesso.',
-        'motorista_id', v_motorista_final_id
+        'motorista_id', v_motorista_final_id,
+        'veiculo_aprovado', p_aprovar_veiculo
     );
 END;
 $$;
