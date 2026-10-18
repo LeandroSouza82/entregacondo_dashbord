@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MapPin, Building, Loader2, Sparkles, AlertTriangle, Check, Search } from 'lucide-react';
 import type { PontoCoordenada } from '../../types/logistics';
+import { normalizarTexto, pertenceAGrandeFlorianopolis } from '../../features/routes/services/buscarClientesEnderecos';
 
 const GOOGLE_PLACES_KEY = import.meta.env.VITE_GOOGLE_PLACES_KEY || '';
 
@@ -81,6 +82,16 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
           includedRegionCodes: ['br'],
           languageCode: 'pt-BR',
           sessionToken: sessionTokenRef.current,
+          // Restrição geográfica obrigatória: Grande Florianópolis (raio de 50km centrado em Florianópolis)
+          locationRestriction: {
+            circle: {
+              center: {
+                latitude: -27.5954,
+                longitude: -48.5480,
+              },
+              radius: 50000.0,
+            },
+          },
         }),
       });
 
@@ -128,6 +139,13 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
               secondaryText: pred.structuredFormat?.secondaryText?.text || '',
               fullText: pred.text?.text || '',
             };
+          })
+          .filter((pred: PlacePredictionItem) => {
+            // Garante que o endereço retornado pelo Google pertence exclusivamente à Grande Florianópolis
+            return pertenceAGrandeFlorianopolis({
+              cidade: pred.secondaryText,
+              endereco_completo: `${pred.mainText} ${pred.secondaryText} ${pred.fullText}`,
+            });
           });
 
         setPredictions(parsed);
@@ -221,11 +239,12 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     });
   };
 
-  // Filtra endereços salvos que coincidem com a digitação
+  // Filtra endereços salvos que coincidem com a digitação (insensível a maiúsculas/acentos e restrito à Grande Floripa)
   const enderecosSalvosFiltrados = enderecosSalvos.filter(item => {
+    if (!pertenceAGrandeFlorianopolis({ endereco_completo: item.endereco })) return false;
     if (!value.trim()) return true;
-    const q = value.toLowerCase();
-    return item.endereco.toLowerCase().includes(q) || item.complemento.toLowerCase().includes(q);
+    const q = normalizarTexto(value);
+    return normalizarTexto(item.endereco).includes(q) || normalizarTexto(item.complemento).includes(q);
   });
 
   return (
