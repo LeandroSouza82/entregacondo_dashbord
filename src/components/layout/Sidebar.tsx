@@ -14,6 +14,7 @@ import {
   UserCheck
 } from 'lucide-react';
 import { isSupabaseConfigured } from '../../lib/supabase';
+import { BrandLogo } from '../common/BrandLogo';
 
 export type ActiveTab = 'overview' | 'new_route' | 'routing' | 'deliveries' | 'drivers' | 'approvals' | 'condos' | 'history' | 'settings';
 
@@ -81,20 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
     <aside className="w-64 bg-navy-800 text-slate-200 flex flex-col flex-shrink-0 border-r border-navy-700/70 select-none h-screen sticky top-0 z-30 transition-all">
       {/* Brand Header */}
       <div className="h-20 flex items-center px-6 border-b border-navy-700/60 bg-navy-850/60 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-terracotta-500 to-terracotta-700 flex items-center justify-center shadow-lg shadow-terracotta-600/30 text-white font-bold ring-2 ring-terracotta-500/20">
-            <Truck className="w-5 h-5 text-white" />
-          </div>
-          <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-lg text-white tracking-tight">Entrega</span>
-              <span className="font-extrabold text-lg text-terracotta-500 tracking-tight">Condo</span>
-            </div>
-            <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">
-              Gestão Logística Pro
-            </span>
-          </div>
-        </div>
+        <BrandLogo size="md" theme="dark" subtitle="Gestão Logística Pro" />
       </div>
 
       {/* Main Navigation */}
