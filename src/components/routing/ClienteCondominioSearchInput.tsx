@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Building2, Search, Loader2, Sparkles, Check, MapPin, ArrowRight } from 'lucide-react';
+import { Building2, Search, Loader2, Sparkles, Check, MapPin, ArrowRight, Clock } from 'lucide-react';
 import type { ClienteEnderecoItem } from '../../features/routes/types/clienteEndereco';
 import { buscarClientesEnderecos } from '../../features/routes/services/buscarClientesEnderecos';
 
@@ -139,17 +139,17 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
         </div>
       </div>
 
-      {/* Dropdown de Sugestões Prioritárias da Base Local */}
+      {/* Dropdown de Sugestões Prioritárias da Base Local com Largura Expandida */}
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 overflow-hidden animate-fadeIn max-h-[320px] overflow-y-auto">
+        <div className="absolute left-0 top-full mt-2 w-full sm:w-[580px] md:w-[660px] lg:w-[720px] max-w-[94vw] bg-white border border-slate-200/90 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn max-h-[420px] overflow-y-auto ring-1 ring-slate-900/5">
           {sugestoes.length > 0 ? (
-            <div className="p-1.5 space-y-1">
-              <div className="px-3 py-1.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                <span className="flex items-center gap-1.5">
+            <div className="p-2 space-y-1">
+              <div className="px-3.5 py-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50/70 border-b border-slate-100 rounded-lg">
+                <span className="flex items-center gap-2">
                   <Building2 className="w-3.5 h-3.5 text-[#1D4ED8]" />
-                  Condomínios e Clientes Salvos
+                  Condomínios Salvos · Grande Florianópolis
                 </span>
-                <span className="text-slate-400">{sugestoes.length} resultado{sugestoes.length > 1 ? 's' : ''}</span>
+                <span className="text-slate-400 font-semibold">{sugestoes.length} resultado{sugestoes.length > 1 ? 's' : ''}</span>
               </div>
 
               {sugestoes.map((item, index) => {
@@ -160,38 +160,42 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
                     type="button"
                     onClick={() => handleSelect(item)}
                     onMouseEnter={() => setIndiceFocado(index)}
-                    className={`w-full text-left p-2.5 rounded-lg flex items-center justify-between gap-3 transition-colors cursor-pointer ${
-                      isFocused ? 'bg-[#EEF4FF] text-[#0F1B2D]' : 'hover:bg-slate-50 text-slate-800'
+                    className={`w-full text-left p-3 rounded-xl flex items-center justify-between gap-4 transition-all cursor-pointer border ${
+                      isFocused
+                        ? 'bg-[#EEF4FF] border-[#1D4ED8]/30 shadow-xs ring-1 ring-[#1D4ED8]/20'
+                        : 'border-transparent hover:bg-slate-50/80 hover:border-slate-100'
                     }`}
                   >
-                    <div className="flex items-start gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#1D4ED8] flex items-center justify-center flex-shrink-0 mt-0.5 border border-blue-100">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="w-9 h-9 rounded-xl bg-blue-50 text-[#1D4ED8] flex items-center justify-center flex-shrink-0 mt-0.5 border border-blue-100/90 shadow-2xs">
                         <Building2 className="w-4 h-4" />
                       </div>
-                      <div className="min-w-0">
-                        <div className="font-bold text-[13px] text-[#0F1B2D] truncate">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-extrabold text-[14px] text-[#0F1B2D] leading-snug">
                           {item.nome_identificador}
                         </div>
-                        <div className="text-xs text-slate-500 truncate flex items-center gap-1 mt-0.5">
-                          <MapPin className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                          <span className="truncate">{item.endereco_completo}</span>
+                        <div className="text-xs text-slate-600 flex items-center gap-1.5 mt-1 font-medium">
+                          <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                          <span className="break-words">{item.endereco_completo}</span>
                         </div>
                         {item.destinatario_padrao && (
-                          <div className="text-[11px] text-slate-400 mt-0.5 truncate">
-                            Destinatário/Portaria: <span className="font-medium text-slate-600">{item.destinatario_padrao}</span>
+                          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                            <span className="font-semibold text-slate-500">Ponto/Portaria:</span>
+                            <span className="text-slate-700">{item.destinatario_padrao}</span>
                           </div>
                         )}
                       </div>
                     </div>
 
-                    <div className="flex-shrink-0 flex flex-col items-end gap-1">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <Sparkles className="w-2.5 h-2.5" />
+                    <div className="flex-shrink-0 flex flex-col items-end gap-1.5 pl-2">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-200/90 whitespace-nowrap shadow-2xs">
+                        <Sparkles className="w-3 h-3 text-emerald-600" />
                         Salvo · {item.total_entregas_realizadas} entregas
                       </span>
                       {item.tempo_medio_minutos && (
-                        <span className="text-[10px] text-slate-400 font-medium">
-                          ~{item.tempo_medio_minutos} min portaria
+                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 font-semibold whitespace-nowrap">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          ~{item.tempo_medio_minutos} min na portaria
                         </span>
                       )}
                     </div>
@@ -201,13 +205,13 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
             </div>
           ) : (
             value.trim().length >= 2 && !carregando && (
-              <div className="p-3.5 text-center text-xs space-y-1 text-slate-600 bg-slate-50/50">
-                <div className="font-bold text-[#0F1B2D]">
+              <div className="p-4 text-center text-xs space-y-1.5 text-slate-600 bg-slate-50/50">
+                <div className="font-bold text-[#0F1B2D] text-sm">
                   Nenhum condomínio salvo encontrado com "{value}"
                 </div>
-                <div className="text-[11px] text-slate-500 flex items-center justify-center gap-1">
-                  <span>Preencha o campo <strong>Endereço</strong> abaixo pelo Google Places para cadastrar este novo local.</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-terracotta-600" />
+                <div className="text-xs text-slate-500 flex items-center justify-center gap-1.5 max-w-md mx-auto">
+                  <span>Preencha o campo <strong>Endereço</strong> abaixo pelo Google Places para cadastrar este novo local na Grande Florianópolis.</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-terracotta-600 flex-shrink-0" />
                 </div>
               </div>
             )
