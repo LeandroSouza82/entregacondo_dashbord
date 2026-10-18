@@ -294,7 +294,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           <span className="w-2.5 h-2.5 rounded-full bg-[#1D4ED8]"></span>
           <span className="font-medium">{paradas.length} paradas na rota</span>
         </span>
-        <span className="font-semibold text-emerald-700">Mapbox GL · Rota Otimizada</span>
+        <span className="font-semibold text-emerald-700">Logística Inteligente · Rota Otimizada</span>
       </div>
     </div>
   );
