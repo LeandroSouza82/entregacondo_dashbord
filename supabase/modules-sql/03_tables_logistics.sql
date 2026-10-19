@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS public.rotas_planejadas (
     percentual_economia_km NUMERIC(5, 2) NOT NULL,
     percentual_economia_tempo NUMERIC(5, 2) NOT NULL,
     ordem_paradas_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    configuracao_navegacao JSONB NOT NULL DEFAULT '{}'::jsonb,
     iniciada_em TIMESTAMPTZ,
     concluida_em TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),

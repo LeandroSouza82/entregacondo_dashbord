@@ -1,7 +1,8 @@
 import React, { useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import Map, { Marker, Source, Layer, Popup, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
-import type { Feature, LineString } from 'geojson';
+import type { Feature, MultiLineString } from 'geojson';
+import { fetchRoadGeometry, type RoadCoordinate } from '../../features/routes/services/roadGeometry';
 import { MapPin, Map as MapIcon, Globe, Moon } from 'lucide-react';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
@@ -38,6 +39,8 @@ interface RouteMapProps {
     coordenadas: PontoCoordenada;
   } | null;
   otimizado?: boolean;
+  showStartPoint?: boolean;
+  routeOrigins?: Record<string, { latitude?: number; longitude?: number; retornar_ao_inicio?: boolean }>;
 }
 
 export const RouteMap: React.FC<RouteMapProps> = ({
@@ -45,6 +48,8 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   paradas,
   pontoPreview,
   otimizado = true,
+  showStartPoint = true,
+  routeOrigins,
 }) => {
   const mapRef = useRef<MapRef | null>(null);
   const [estiloAtual, setEstiloAtual] = useState<string>('mapbox://styles/mapbox/streets-v12');
@@ -67,32 +72,36 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     };
   }, [pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat]);
 
-  // GeoJSON LineString da rota para Source / Layer
-  const routeGeoJson = useMemo<Feature<LineString> | null>(() => {
-    const coordinates: [number, number][] = [
-      [pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat],
-      ...paradas.map((p) => [p.coordenadas.lng, p.coordenadas.lat] as [number, number]),
-    ];
+  const [routeGeoJson, setRouteGeoJson] = useState<Feature<MultiLineString> | null>(null);
+  const [roadError, setRoadError] = useState<string | null>(null);
+  const plannedOrigins = Object.entries(routeOrigins || {}).flatMap(([id, origin]) => {
+    const { latitude, longitude } = origin;
+    return typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
+      ? [{ id, coordinates: [longitude, latitude] as RoadCoordinate, roundTrip: origin.retornar_ao_inicio === true }] : [];
+  });
+  const groups: Record<string, RoadCoordinate[]> = {};
+  for (const parada of paradas) {
+    if (['entregue', 'tentativa_falha', 'cancelada'].includes(parada.status || '')) continue;
+    (groups[parada.rotaId || 'route'] ||= []).push([parada.coordenadas.lng, parada.coordenadas.lat]);
+  }
+  for (const origin of plannedOrigins) {
+    if (!groups[origin.id]?.length) continue;
+    groups[origin.id].unshift(origin.coordinates);
+    if (origin.roundTrip) groups[origin.id].push(origin.coordinates);
+  }
+  const geometryKey = JSON.stringify(showStartPoint
+    ? [[[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat], ...paradas.map(p => [p.coordenadas.lng, p.coordenadas.lat]), ...(pontoPreview ? [[pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]] : [])]]
+    : Object.values(groups));
+  useEffect(() => {
+    const controller = new AbortController();
 
-    if (pontoPreview) {
-      coordinates.push([pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]);
-    }
-
-    if (coordinates.length < 2) {
-      return null;
-    }
-
-    return {
-      type: 'Feature',
-      properties: {
-        otimizado,
-      },
-      geometry: {
-        type: 'LineString',
-        coordinates,
-      },
-    };
-  }, [pontoPartida, paradas, pontoPreview, otimizado]);
+    if (!MAPBOX_TOKEN) return () => controller.abort();
+    const groups = JSON.parse(geometryKey) as RoadCoordinate[][];
+    Promise.all(groups.map(points => fetchRoadGeometry(points, MAPBOX_TOKEN, controller.signal)))
+      .then(results => { if (!controller.signal.aborted) { setRoadError(null); setRouteGeoJson({type: 'Feature', properties: {}, geometry: {type: 'MultiLineString', coordinates: results.flat()}}); } })
+      .catch(() => { if (!controller.signal.aborted) { setRouteGeoJson(null); setRoadError('Trajeto indisponível. Os pontos continuam no mapa; tente atualizar.'); } });
+    return () => controller.abort();
+  }, [geometryKey]);
 
   // Layer styling memoizado com contorno de alto contraste
   const routeCasingStyle = useMemo(() => ({
@@ -124,19 +133,14 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     },
   }), [otimizado]);
 
-  // Auto-ajuste de bounds (fitBounds) com proteção estrita para evitar loops
+  const boundsKey = JSON.stringify([
+    ...(showStartPoint ? [[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat]] : plannedOrigins.map(o => o.coordinates)),
+    ...paradas.map(p => [p.coordenadas.lng, p.coordenadas.lat]),
+    ...(pontoPreview ? [[pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]] : []),
+  ]);
   const fitRouteBounds = useCallback(() => {
     if (!mapRef.current) return;
-
-    const coordinates = [
-      [pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat],
-      ...paradas.map((p) => [p.coordenadas.lng, p.coordenadas.lat]),
-    ];
-
-    if (pontoPreview) {
-      coordinates.push([pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]);
-    }
-
+    const coordinates = JSON.parse(boundsKey) as RoadCoordinate[];
     if (coordinates.length === 0) return;
 
     let minLng = coordinates[0][0];
@@ -158,7 +162,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
       ],
       { padding: 40, duration: 800, maxZoom: 15 }
     );
-  }, [pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat, paradas, pontoPreview]);
+  }, [boundsKey]);
 
   // Dispara fitBounds apenas quando o número de paradas muda
   useEffect(() => {
@@ -170,7 +174,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
 
   // Se o ponto de partida mudar (novas coordenadas selecionadas), reposiciona a câmera imediatamente no novo ponto
   useEffect(() => {
-    if (mapRef.current && pontoPartida?.coordenadas) {
+    if (mapRef.current) {
       const { lng, lat } = pontoPartida.coordenadas;
       if (typeof lng === 'number' && typeof lat === 'number' && !isNaN(lng) && !isNaN(lat)) {
         if (paradas.length === 0) {
@@ -211,14 +215,14 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           setPopupInfo({
             longitude: parada.coordenadas.lng,
             latitude: parada.coordenadas.lat,
-            titulo: `Parada ${idx + 1}: ${parada.destinatario}`,
+            titulo: `Parada ${parada.sequencia || idx + 1}: ${parada.destinatario}`,
             subtitulo: `${parada.nomeLocal} · ${parada.enderecoFormatado}`,
             tempo: parada.tempoMedioAtendimentoMinutos,
           });
         }}
       >
-        <div className="w-7 h-7 rounded-full bg-[#1D4ED8] text-white font-sans text-xs font-black flex items-center justify-center shadow-lg border-2 border-white cursor-pointer hover:scale-110 transition-transform">
-          {idx + 1}
+        <div style={{backgroundColor: parada.status === 'entregue' ? '#15803D' : parada.status === 'tentativa_falha' ? '#DC2626' : parada.status === 'cancelada' ? '#64748B' : '#1D4ED8'}} className="w-7 h-7 rounded-full text-white font-sans text-xs font-black flex items-center justify-center shadow-lg border-2 border-white cursor-pointer hover:scale-110 transition-transform">
+          {parada.sequencia || idx + 1}
         </div>
       </Marker>
     ));
@@ -240,6 +244,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
 
   return (
     <div className="relative w-full rounded-2xl overflow-hidden border border-[#E1E6ED] bg-white shadow-card">
+      {roadError && <div role="status" className="p-2 text-sm text-amber-900 bg-amber-50">{roadError}</div>}
       {/* Seletor Flutuante de Estilos de Camada */}
       <div className="absolute top-3 left-3 z-10 flex items-center p-1 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl shadow-md gap-1">
         {MAP_STYLES.map((st) => {
@@ -275,7 +280,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           mapboxAccessToken={MAPBOX_TOKEN}
           mapStyle={estiloAtual}
           reuseMaps
-          attributionControl={false}
+          attributionControl={true}
           onLoad={(evt) => {
             if (pontoPartida?.coordenadas) {
               const { lng, lat } = pontoPartida.coordenadas;
@@ -302,7 +307,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           <NavigationControl position="bottom-right" showCompass={false} />
 
           {/* Marcador Ponto de Partida */}
-          <Marker
+          {showStartPoint && <Marker
             longitude={pontoPartida.coordenadas.lng}
             latitude={pontoPartida.coordenadas.lat}
             anchor="center"
@@ -322,8 +327,13 @@ export const RouteMap: React.FC<RouteMapProps> = ({
             >
               Início
             </div>
-          </Marker>
+          </Marker>}
 
+          {!showStartPoint && plannedOrigins.map(origin => (
+            <Marker key={origin.id} longitude={origin.coordinates[0]} latitude={origin.coordinates[1]} anchor="center">
+              <div title="Posição do motorista no momento da organização" className="rounded-md bg-navy-900 text-white text-xs px-2 py-1 border-2 border-white">Origem do motorista</div>
+            </Marker>
+          ))}
           {/* Marcadores das Paradas da Rota */}
           {renderedMarkers}
 
@@ -385,7 +395,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           <span className="w-2.5 h-2.5 rounded-full bg-[#1D4ED8]"></span>
           <span className="font-medium">{paradas.length} paradas na rota</span>
         </span>
-        <span className="font-semibold text-emerald-700">Logística Inteligente · Rota Otimizada</span>
+        <span className="font-semibold text-emerald-700">{showStartPoint ? 'Sequência planejada' : 'Rotas despachadas'}</span>
       </div>
     </div>
   );

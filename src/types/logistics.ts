@@ -38,6 +38,8 @@ export interface PontoCoordenada {
 }
 
 export interface PontoParada {
+  status?: string;
+  rotaId?: string;
   id: string; // id da entrega
   sequencia: number;
   clienteEnderecoId: string;

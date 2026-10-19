@@ -40,6 +40,7 @@ const FILE_ORDER = [
   path.join(FUNCTIONS_DIR, 'analisar_veiculo_motorista.sql'),
   path.join(FUNCTIONS_DIR, 'despachar_rota_transacional.sql'),
   path.join(FUNCTIONS_DIR, 'iniciar_rota.sql'),
+  path.join(FUNCTIONS_DIR, 'reordenar_paradas_rota.sql'),
   path.join(FUNCTIONS_DIR, 'concluir_rota.sql'),
   path.join(FUNCTIONS_DIR, 'registrar_conclusao_entrega.sql'),
   path.join(FUNCTIONS_DIR, 'obter_meu_status_acesso.sql'),

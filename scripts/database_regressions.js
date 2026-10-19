@@ -112,7 +112,7 @@ export async function compareLiveCatalogs(fresh,upgraded,names){
    "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname=ANY($1) ORDER BY p.proname,args",[names]);
   const policies=await db.query("SELECT schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' OR (schemaname='storage' AND tablename='objects') ORDER BY schemaname,tablename,policyname");
   const constraints=await db.query("SELECT c.conname,pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c WHERE c.conrelid='public.storage_limpeza_fila'::regclass ORDER BY c.conname");
-  return {functions:functions.rows,policies:policies.rows,constraints:constraints.rows};
+  return {functions:functions.rows.map(row=>({...row,definition:row.definition.replace(/\r\n/g,'\n')})),policies:policies.rows,constraints:constraints.rows};
  }
  const a=await snapshot(fresh),b=await snapshot(upgraded);
  assert.deepEqual(b.functions,a.functions,'RPCs e privilégios divergem entre instalação nova e atualização');

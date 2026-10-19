@@ -216,6 +216,32 @@ BEGIN
     result:=public.iniciar_rota(route_id);
     PERFORM set_config('role','postgres',true);
     PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista atribuído e veículo aprovado inicia rota');
+    -- Reorder security and stale-edit protection, using the approved test driver.
+    DECLARE
+      extra_id uuid; done_id uuid; expected uuid[]; reordered uuid[];
+    BEGIN
+      UPDATE public.entregas SET ordem_na_rota=1 WHERE id=delivery_id;
+      INSERT INTO public.entregas(empresa_id,codigo_rastreio,cliente_endereco_id,destinatario_nome,motorista_id,rota_id,status,ordem_na_rota)
+      VALUES(company_a,'REORDER-2',addr_id,'Second','c1000000-0000-0000-0000-000000000001',route_id,'atribuida',2) RETURNING id INTO extra_id;
+      INSERT INTO public.entregas(empresa_id,codigo_rastreio,cliente_endereco_id,destinatario_nome,motorista_id,rota_id,status,ordem_na_rota)
+      VALUES(company_a,'REORDER-DONE',addr_id,'Done','c1000000-0000-0000-0000-000000000001',route_id,'entregue',3) RETURNING id INTO done_id;
+      expected:=ARRAY[delivery_id,extra_id]; reordered:=ARRAY[extra_id,delivery_id];
+      PERFORM set_config('request.jwt.claim.sub',admin_b::text,true);
+      result:=public.reordenar_paradas_rota(route_id,reordered,expected);
+      PERFORM pg_temp.check_result(result->>'sucesso'='false','other company cannot reorder route');
+      PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+      result:=public.reordenar_paradas_rota(route_id,ARRAY[delivery_id,delivery_id],expected);
+      PERFORM pg_temp.check_result(result->>'sucesso'='false','duplicate or missing stop rejected');
+      result:=public.reordenar_paradas_rota(route_id,reordered,expected,'{"latitude":-27.5,"longitude":-48.5,"retornar_ao_inicio":true,"metodo":"circuito_2opt"}');
+      PERFORM pg_temp.check_result((SELECT configuracao_navegacao->>'metodo'='circuito_2opt' FROM public.rotas_planejadas WHERE id=route_id),'driver origin persisted with route order');
+      PERFORM pg_temp.check_result(result->>'sucesso'='true' AND (SELECT ordem_na_rota=1 FROM public.entregas WHERE id=extra_id),'assigned driver persists new order');
+      result:=public.reordenar_paradas_rota(route_id,expected,expected);
+      PERFORM pg_temp.check_result(result->>'codigo'='ORDEM_DESATUALIZADA','stale reorder cannot overwrite current order');
+      PERFORM pg_temp.check_result((SELECT ordem_na_rota=3 FROM public.entregas WHERE id=done_id),'completed stop position preserved');
+      PERFORM pg_temp.check_result((SELECT ordem_paradas_json->0->>'id'=extra_id::text FROM public.rotas_planejadas WHERE id=route_id),'route snapshot agrees with delivery order');
+      PERFORM pg_temp.check_result(NOT has_function_privilege('anon','public.reordenar_paradas_rota(uuid,uuid[],uuid[],jsonb)','EXECUTE'),'anonymous reorder blocked');
+      UPDATE public.entregas SET status='entregue' WHERE id=extra_id;
+    END;
     UPDATE public.empresa_membros SET status='suspenso' WHERE user_id=driver_a AND empresa_id=company_a;
     result:=public.registrar_conclusao_entrega(delivery_id,true);
     PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','suspensão impede baixa de entrega');

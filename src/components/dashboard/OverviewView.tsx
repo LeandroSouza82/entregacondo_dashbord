@@ -27,7 +27,7 @@ type Delivery = Database['public']['Tables']['entregas']['Row'] & {
   clientes_enderecos?: Database['public']['Tables']['clientes_enderecos']['Row'] | null;
 };
 
-type RotaPlanejada = Database['public']['Tables']['rotas_planejadas']['Row'];
+type RotaPlanejada = Database['public']['Tables']['rotas_planejadas']['Row'] & { configuracao_navegacao?: { latitude?: number; longitude?: number; retornar_ao_inicio?: boolean } };
 
 interface OverviewViewProps {
   onGoToOptimizer?: () => void;
@@ -134,77 +134,30 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
             .filter(e => e.status !== 'cancelada')
             .map((e, idx) => {
               const cli = e.clientes_enderecos;
-              const lat = Number(cli?.latitude) || -27.5954 + (idx * 0.005);
-              const lng = Number(cli?.longitude) || -48.5480 + (idx * 0.005);
+              const record = e as unknown as Record<string, unknown>;
+              const route = rotasCarregadas.find(r => r.id === e.rota_id);
+              const snapshot = Array.isArray(route?.ordem_paradas_json) ? (route.ordem_paradas_json as any[]).find(p => p.cliente_endereco_id === e.cliente_endereco_id || p.id === e.id) : undefined;
+              const rawLat = record.latitude ?? cli?.latitude ?? snapshot?.coordenadas?.lat;
+              const rawLng = record.longitude ?? cli?.longitude ?? snapshot?.coordenadas?.lng;
+              const lat = rawLat == null ? NaN : Number(rawLat);
+              const lng = rawLng == null ? NaN : Number(rawLng);
 
               return {
                 id: e.id,
+                status: e.status,
+                rotaId: e.rota_id || undefined,
                 sequencia: e.ordem_na_rota || idx + 1,
                 clienteEnderecoId: e.cliente_endereco_id,
                 nomeLocal: cli?.nome_identificador || e.unidade_apartamento || 'Local',
                 destinatario: e.destinatario_nome,
-                enderecoFormatado: cli?.endereco_completo || 'Florianópolis, SC',
+                enderecoFormatado: String(record.endereco || snapshot?.endereco_formatado || cli?.endereco_completo || ''),
                 coordenadas: { lat, lng },
                 tempoMedioAtendimentoMinutos: cli?.tempo_medio_minutos || 11,
                 tipoTarefa: (e.tipo_tarefa as any) || 'entrega',
                 prioridade: (e.prioridade as any) || 'normal',
                 codigoRastreio: e.codigo_rastreio,
               };
-            });
-        } else if (rotasCarregadas.length > 0 && Array.isArray(rotasCarregadas[0].ordem_paradas_json)) {
-          // Fallback resiliente usando ordem_paradas_json da rota persistida
-          const paradasJson = rotasCarregadas[0].ordem_paradas_json as any[];
-          paradasDoMapa = paradasJson.map((p, idx) => ({
-            id: p.id || String(idx),
-            sequencia: p.sequencia || idx + 1,
-            clienteEnderecoId: p.cliente_endereco_id || '',
-            nomeLocal: p.nome_local || 'Local',
-            destinatario: p.destinatario || 'Cliente',
-            enderecoFormatado: p.endereco_formatado || 'Florianópolis, SC',
-            coordenadas: p.coordenadas || { lat: -27.5954 + (idx * 0.005), lng: -48.5480 + (idx * 0.005) },
-            tempoMedioAtendimentoMinutos: 11,
-            tipoTarefa: p.tipo_tarefa || 'entrega',
-            prioridade: 'normal',
-            codigoRastreio: `EC-${idx + 100}`,
-          }));
-        } else {
-          // Fallback resiliente localStorage para manter rota sincronizada após despacho ou reload
-          try {
-            const rawLast = window.localStorage?.getItem('ec_last_dispatched_route');
-            if (rawLast) {
-              const last = JSON.parse(rawLast);
-              if (last && Array.isArray(last.paradas) && last.paradas.length > 0) {
-                paradasDoMapa = last.paradas;
-              }
-            }
-          } catch {}
-        }
-
-        // Se entregasCarregadas estiver vazia mas paradasDoMapa tiver paradas, sintetiza entregas para preencher lista e KPIs
-        if (entregasCarregadas.length === 0 && paradasDoMapa.length > 0) {
-          entregasCarregadas = paradasDoMapa.map((p, idx) => ({
-            id: p.id || `ent-${idx}`,
-            empresa_id: companyId || '',
-            cliente_endereco_id: p.clienteEnderecoId,
-            destinatario_nome: p.destinatario,
-            unidade_apartamento: p.nomeLocal,
-            codigo_rastreio: p.codigoRastreio || `EC-${100 + idx}`,
-            tipo_tarefa: p.tipoTarefa || 'entrega',
-            prioridade: p.prioridade || 'normal',
-            status: 'em_transito',
-            ordem_na_rota: p.sequencia || idx + 1,
-            volumes_qtd: 1,
-            created_at: new Date().toISOString(),
-            clientes_enderecos: {
-              id: p.clienteEnderecoId,
-              nome_identificador: p.nomeLocal,
-              endereco_completo: p.enderecoFormatado,
-              latitude: p.coordenadas.lat,
-              longitude: p.coordenadas.lng,
-              empresa_id: companyId || '',
-              created_at: new Date().toISOString(),
-            }
-          })) as any;
+            }).filter(p => Number.isFinite(p.coordenadas.lat) && Number.isFinite(p.coordenadas.lng) && Math.abs(p.coordenadas.lat) <= 90 && Math.abs(p.coordenadas.lng) <= 180);
         }
 
         // 4. Consulta motoristas ativos com tratamento seguro
@@ -249,8 +202,10 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
     }
 
     void loadData();
+    const refreshTimer = window.setInterval(() => { if (document.visibilityState === "visible") void loadData(); }, 15000);
 
     return () => {
+      window.clearInterval(refreshTimer);
       active = false;
     };
   }, [revision]);
@@ -398,6 +353,8 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
 
         <div className="p-4 bg-slate-50/50">
           <RouteMap
+            showStartPoint={false}
+            routeOrigins={Object.fromEntries(rotasPlanejadas.map(r => [r.id, r.configuracao_navegacao || {}]))}
             pontoPartida={pontoPartida}
             paradas={paradasMapa}
             otimizado={true}
