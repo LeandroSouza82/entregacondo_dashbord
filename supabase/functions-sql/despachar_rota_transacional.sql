@@ -148,7 +148,9 @@ BEGIN
         tempo_otimizado_minutos,
         percentual_economia_km,
         percentual_economia_tempo,
-        ordem_paradas_json
+        ordem_paradas_json,
+        metricas_fonte,
+        metricas_atualizadas_em
     ) VALUES (
         v_empresa_id,
         v_motorista_id,
@@ -161,7 +163,9 @@ BEGIN
         v_tempo_otim,
         v_economia_dist,
         v_economia_tempo,
-        v_ordem_json
+        v_ordem_json,
+        CASE WHEN p_dados->>'metricas_fonte'='mapbox_directions_planejamento' AND v_distancia_otim>0 AND v_tempo_otim>0 THEN 'mapbox_directions_planejamento' END,
+        CASE WHEN p_dados->>'metricas_fonte'='mapbox_directions_planejamento' AND v_distancia_otim>0 AND v_tempo_otim>0 THEN now() END
     )
     RETURNING id INTO v_rota_id;
 

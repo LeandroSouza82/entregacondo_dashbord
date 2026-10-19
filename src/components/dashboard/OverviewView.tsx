@@ -213,7 +213,7 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
   const entregasConcluidas = deliveries.filter(d => d.status === 'entregue').length;
   const entregasEmTransito = deliveries.filter(d => d.status === 'em_transito' || d.status === 'atribuida').length;
   const totalKmHoje = rotasPlanejadas.reduce(
-    (acc, r) => acc + Number(r.distancia_otimizada_km || r.distancia_original_km || 0),
+    (acc, r) => acc + (r.metricas_fonte === 'mapbox_directions_planejamento' && r.metricas_atualizadas_em ? Number(r.distancia_otimizada_km || 0) : 0),
     0
   );
 

@@ -1,3 +1,4 @@
+import { fetchRoadPlan, type RoadCoordinate } from '../../features/routes/services/roadGeometry';
 import { requireCompanyId } from '../../lib/company';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { RouteMap } from './RouteMap';
@@ -200,17 +201,46 @@ export const NewRouteView: React.FC = () => {
   }, []);
 
   // Cálculo inteligente de trajeto e métricas (Ordem de cadastro vs Rota Otimizada)
-  const metricasRota = useMemo<MetricasRota>(() => {
+  const heuristicMetrics = useMemo<MetricasRota>(() => {
     return otimizarSequenciaERota(pontoPartida, entregasDaRota);
   }, [pontoPartida, entregasDaRota]);
 
   // Lista de paradas a renderizar no mapa: ordenada pela melhor sequência se otimização estiver ativa
   const paradasParaOMapa = useMemo(() => {
-    if (otimizarAutomatico && metricasRota.paradasOtimizadas.length > 0) {
-      return metricasRota.paradasOtimizadas;
+    if (otimizarAutomatico && heuristicMetrics.paradasOtimizadas.length > 0) {
+      return heuristicMetrics.paradasOtimizadas;
     }
     return entregasDaRota;
-  }, [otimizarAutomatico, metricasRota.paradasOtimizadas, entregasDaRota]);
+  }, [otimizarAutomatico, heuristicMetrics.paradasOtimizadas, entregasDaRota]);
+
+  const roadKey = JSON.stringify([
+    [[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat], ...entregasDaRota.map(p => [p.coordenadas.lng, p.coordenadas.lat])],
+    [[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat], ...paradasParaOMapa.map(p => [p.coordenadas.lng, p.coordenadas.lat])],
+  ]);
+  const [roadTotals, setRoadTotals] = useState<{key: string; original: {kilometers: number; minutes: number}; selected: {kilometers: number; minutes: number}} | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const [original, selected] = JSON.parse(roadKey) as RoadCoordinate[][];
+    if (original.length < 2) return () => controller.abort();
+    const token = import.meta.env.VITE_MAPBOX_TOKEN || '';
+    Promise.all([fetchRoadPlan(original, token, controller.signal), fetchRoadPlan(selected, token, controller.signal)])
+      .then(([a,b]) => { if (!controller.signal.aborted) setRoadTotals({key: roadKey, original:a, selected:b}); })
+      .catch(() => { if (!controller.signal.aborted) setRoadTotals(null); });
+    return () => controller.abort();
+  }, [roadKey]);
+  const verifiedTotals = roadTotals?.key === roadKey ? roadTotals : null;
+  const originalKm = verifiedTotals?.original.kilometers || 0;
+  const selectedKm = verifiedTotals?.selected.kilometers || 0;
+  const originalMin = verifiedTotals?.original.minutes || 0;
+  const selectedMin = verifiedTotals?.selected.minutes || 0;
+  const metricasRota: MetricasRota = {...heuristicMetrics,
+    distanciaOriginalKm:Number(originalKm.toFixed(2)), tempoOriginalMinutos:Math.ceil(originalMin),
+    distanciaOtimizadaKm:Number(selectedKm.toFixed(2)), tempoOtimizadoMinutos:Math.ceil(selectedMin),
+    economiaKm:Number(Math.max(0,originalKm-selectedKm).toFixed(2)),
+    percentualEconomiaKm:originalKm>0 ? Math.round(Math.max(0,originalKm-selectedKm)/originalKm*100):0,
+    economiaTempoMinutos:Math.max(0,Math.ceil(originalMin-selectedMin)),
+    percentualEconomiaTempo:originalMin>0 ? Math.round(Math.max(0,originalMin-selectedMin)/originalMin*100):0,
+  };
 
   const handleFixarPontoPartidaPadrao = useCallback(async () => {
     const textoDigitado = pontoPartidaTexto.trim();
@@ -557,7 +587,12 @@ export const NewRouteView: React.FC = () => {
     if (isSupabaseConfigured) {
       setDespachando(true);
       try {
+        if (!verifiedTotals || selectedKm <= 0 || selectedMin <= 0) {
+          setMensagemErro('Tempo e distância pelas ruas indisponíveis. Aguarde o cálculo ou tente novamente; o rascunho foi preservado.');
+          return;
+        }
         const payloadDespacho = {
+          metricas_fonte: 'mapbox_directions_planejamento',
           idempotency_key: despachoKey.current,
           empresa_id: empresaId,
           motorista_id: motoristaSelecionado.id,
@@ -1348,7 +1383,7 @@ export const NewRouteView: React.FC = () => {
                   <span className="font-semibold text-[#2B3A4F]">Ordem de cadastro</span>
                   <span className="font-bold text-[#0F1B2D]">
                     {entregasDaRota.length > 0
-                      ? `${metricasRota.distanciaOriginalKm} km · ${formatarTempoMinutos(metricasRota.tempoOriginalMinutos)}`
+                      ? verifiedTotals ? `${metricasRota.distanciaOriginalKm} km · ${formatarTempoMinutos(metricasRota.tempoOriginalMinutos)}` : 'Estimativa viária indisponível'
                       : '0 km · 0 min'}
                   </span>
                 </div>
@@ -1362,7 +1397,7 @@ export const NewRouteView: React.FC = () => {
                   <span className="font-semibold text-[#2B3A4F]">Rota otimizada</span>
                   <span className="font-bold text-[#15803D]">
                     {entregasDaRota.length > 0
-                      ? `${metricasRota.distanciaOtimizadaKm} km · ${formatarTempoMinutos(metricasRota.tempoOtimizadoMinutos)}`
+                      ? verifiedTotals ? `${metricasRota.distanciaOtimizadaKm} km · ${formatarTempoMinutos(metricasRota.tempoOtimizadoMinutos)}` : 'Estimativa viária indisponível'
                       : '0 km · 0 min'}
                   </span>
                 </div>
@@ -1386,14 +1421,15 @@ export const NewRouteView: React.FC = () => {
                     ? '—'
                     : metricasRota.economiaKm > 0
                     ? `-${metricasRota.economiaKm} km`
-                    : '100%'}
+                    : '—'}
                 </div>
                 <div className="text-[13px] font-semibold leading-tight">
                   {entregasDaRota.length === 0
                     ? 'Adicione paradas para traçar a rota e calcular a economia.'
+                    : !verifiedTotals ? 'Aguardando estimativa pelas ruas. Não inclui atendimento nas paradas.'
                     : metricasRota.economiaKm > 0
                     ? `Economia de ${metricasRota.percentualEconomiaKm}% na distância e ${metricasRota.economiaTempoMinutos} min previstos a menos com a Rota Inteligente!`
-                    : `Trajeto ideal traçado · ${metricasRota.distanciaOtimizadaKm} km no trajeto mais eficiente.`}
+                    : `Deslocamento pelas ruas · ${metricasRota.distanciaOtimizadaKm} km. Atendimento nas paradas não incluído.`}
                 </div>
               </div>
             </div>

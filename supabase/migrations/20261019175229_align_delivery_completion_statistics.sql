@@ -14,7 +14,7 @@ BEGIN
           AND column_name = 'total_entregas_realizadas') INTO v_missing_count;
 
     ALTER TABLE public.clientes_enderecos
-        ADD COLUMN IF NOT EXISTS tempo_medio_minutos numeric(5,2) NOT NULL DEFAULT 15.00;
+        ADD COLUMN IF NOT EXISTS tempo_medio_minutos numeric(8,2) NOT NULL DEFAULT 15.00;
     ALTER TABLE public.clientes_enderecos
         ADD COLUMN IF NOT EXISTS total_entregas_realizadas integer NOT NULL DEFAULT 0;
     ALTER TABLE public.clientes_enderecos
@@ -25,7 +25,11 @@ BEGIN
         SET tempo_medio_minutos = h.mean
         FROM (SELECT cliente_endereco_id, round(avg(tempo_total_minutos), 2) AS mean
               FROM public.historico_atendimentos GROUP BY cliente_endereco_id) h
-        WHERE c.id = h.cliente_endereco_id;
+        WHERE c.id = h.cliente_endereco_id AND h.mean IS NOT NULL;
+        UPDATE public.clientes_enderecos c
+        SET tempo_medio_minutos = (to_jsonb(c)->>'tempo_medio_atendimento_min')::numeric
+        WHERE to_jsonb(c)->>'tempo_medio_atendimento_min' ~ '^[0-9]+([.][0-9]+)?$'
+          AND NOT EXISTS (SELECT 1 FROM public.historico_atendimentos h WHERE h.cliente_endereco_id=c.id);
     END IF;
     IF v_missing_count THEN
         UPDATE public.clientes_enderecos c

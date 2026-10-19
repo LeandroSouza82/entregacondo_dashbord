@@ -1,38 +1,33 @@
-# Correção da conclusão de tarefa
+# Correção da conclusão e procedência das métricas
 
-A RPC `registrar_conclusao_entrega` usa `clientes_enderecos.tempo_medio_minutos`.
-A captura do aplicativo informa SQLSTATE 42703 para essa coluna. O schema
-canônico já define a coluna, mas a instalação remota está divergente.
+Validação em 19/10/2026 na branch `fix/conclusao-falha-metricas-20261019`. PR 1 permanece sem merge. Nenhum deploy do dashboard foi feito.
 
-A migração `align_delivery_completion_statistics` adiciona somente os campos
-ausentes requeridos no endereço. Se os campos de média ou contagem forem novos,
-os inicializa a partir de `historico_atendimentos`; valores existentes são
-preservados. A RPC mantém sua autorização e seu contrato, exige motivo em
-tentativas sem sucesso, rejeita horários invertidos e trata reenvios de um
-mesmo resultado como sucesso sem inserir histórico ou recalcular média outra vez.
-Tentar trocar o resultado de uma tarefa finalizada exige processo separado.
+## Banco existente
 
-## Validação local executada
+Confirmado o projeto novo EntregaCondo `vblwuvhdqgzdjnoscyqo` pelas configurações locais do app e dashboard e pelo SQL Editor autenticado. O conector Supabase disponível não tinha acesso a esse projeto; a aplicação ocorreu pelo SQL Editor do projeto confirmado. Não foi executado o schema completo nem alterado NewV10.
 
-Foi usado PostgreSQL embarcado PGlite, em banco descartável e sem conexão externa.
-O script `scripts/test_delivery_completion.mjs` passou nos cenários: colunas
-ausentes, reconstrução do histórico, reaplicação sem sobrescrita, conclusão,
-reenvio idempotente, resultado conflitante, motivo obrigatório, falha com motivo
-persistido e negativa de autorização. Os helpers de autenticação/autorização
-são stubs somente no banco de teste; isso não valida RLS ou Auth reais.
+O schema remoto tinha `tempo_medio_atendimento_min`, mas não `tempo_medio_minutos` nem `updated_at` em clientes_enderecos. A migração `20261019175229_align_delivery_completion_statistics.sql` adiciona campos ausentes, inicializa somente média/contagem novas a partir do histórico e aproveita a média legada quando não há histórico. Preserva valores existentes.
 
-Para reproduzir, instalar `@electric-sql/pglite@0.5.10` em diretório temporário e
-executar o script com `PGLITE_MODULE` apontando para `dist/index.js` desse pacote.
-Nenhuma dependência do aplicativo foi alterada para essa verificação.
+A RPC mantém a autorização operacional, exige motivo em falhas, rejeita horários invertidos, bloqueia resultados conflitantes e trata o reenvio do mesmo resultado sem inserir histórico nem recalcular estatísticas. A atualização de entrega, histórico e média é atômica.
 
-## Aplicação e validação remota pendentes
+Aplicadas em transação as migrações `20261019175229` e `20261019182920`. O remoto não tinha `supabase_migrations.schema_migrations`; foi criado o registro privado padrão com RLS habilitado e somente essas duas versões e seus SQLs. Não foram inventadas entradas para migrações antigas. Em futuras reconciliações com a CLI, revisar o histórico legado antes de aplicar migrações anteriores.
 
-Aplicar no projeto novo `vblwuvhdqgzdjnoscyqo`, após revisar seu estado e histórico
-de migrações. Esse projeto não consta na conexão Supabase disponível nesta sessão.
-Não foi feita migração, consulta de dados, deploy ou alteração do V10 antigo.
+## Planejamento e reordenação
 
-Após aplicar, conferir as três colunas de endereço, permissões de execução da
-RPC e os dois fluxos reais com uma tarefa de teste: sucesso e tentativa sem
-sucesso. Reenviar a mesma conclusão deve manter apenas um registro de histórico
-para aquela tarefa. Conferir também um usuário sem autorização operacional.
-Não declarar a correção concluída em produção antes dessa validação.
+O dashboard consulta Mapbox Directions para distância e duração das sequências original e escolhida. A heurística antiga permanece apenas para sugerir a ordem; seus quilômetros e tempos aproximados não são apresentados nem despachados como estimativas verificadas. Sem resposta viária válida, o despacho é bloqueado e o rascunho permanece.
+
+A migração `20261019182920_route_road_metrics_provenance.sql` adiciona origem e horário das métricas. No despacho, a origem é `mapbox_directions_planejamento`. Na reordenação pelo app, os totais viários da posição atual pelas paradas pendentes são gravados atomicamente com a ordem, como `mapbox_directions_restante`. Reordenação sem novos totais invalida a procedência anterior. Valores antigos são preservados no banco, mas o app não os apresenta como estimativas confiáveis. O resumo do dashboard não mistura estimativas restantes com totais planejados.
+
+As estimativas cobrem deslocamento pelas ruas, sem atendimento nas paradas nem trânsito em tempo real. Não são recalculadas continuamente. Nenhuma chave local foi incluída no código ou na documentação.
+
+## Verificações executadas
+
+- `npm run verify:sql`: equivalência estática e seis contraprovas passaram; 32 funções consistentes.
+- `npm run test:db`: 70 regressões em instalação nova e 70 em atualização; catálogo de 32 funções, 18 políticas e seis constraints; cinco cenários concorrentes em cada instalação; três testes de preservação de migração.
+- `scripts/test_delivery_completion.mjs` com PGlite temporário: passou para campos ausentes, histórico, reaplicação, conclusão, idempotência, conflito, motivo e autorização simulada. Dependências do produto não foram alteradas.
+- `node --test scripts/test_road_metrics.mjs`: quatro testes passaram, incluindo agregação de trechos, duração ausente, erro/cancelamento e falta de token/pontos.
+- Consulta real Directions entre dois pontos da rota: 4,408287 km, 10,660883 minutos e geometria com 233 pontos; sem expor a chave.
+- `npm run build`: passou. Aviso de tamanho do bundle permanece.
+- `supabase/tests/remote_completion_validation.sql`: PASS no projeto novo, usando papel authenticated e helpers reais para conclusão, falha com motivo, reenvio idempotente e usuário sem autorização; execução anônima bloqueada. Todas as fixtures e alterações de estatística desse teste foram revertidas por ROLLBACK.
+
+A validação SQL remota não equivale ao percurso completo via APK e sessão JWT real. Ainda validar no aparelho e na UI autenticada do dashboard: tarefa de teste, atualização dos indicadores, nova rota com métricas e reordenação. O app compilado é `0.1.14+15`; a documentação do repositório mobile contém caminho e hash do APK. Foto/recebedor da referência 05 e fila offline de conclusões continuam pendentes.

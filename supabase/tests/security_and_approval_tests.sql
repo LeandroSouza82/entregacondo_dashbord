@@ -240,6 +240,10 @@ BEGIN
       PERFORM pg_temp.check_result((SELECT ordem_na_rota=3 FROM public.entregas WHERE id=done_id),'completed stop position preserved');
       PERFORM pg_temp.check_result((SELECT ordem_paradas_json->0->>'id'=extra_id::text FROM public.rotas_planejadas WHERE id=route_id),'route snapshot agrees with delivery order');
       PERFORM pg_temp.check_result(NOT has_function_privilege('anon','public.reordenar_paradas_rota(uuid,uuid[],uuid[],jsonb)','EXECUTE'),'anonymous reorder blocked');
+      result:=public.reordenar_paradas_rota(route_id,reordered,reordered,'{"latitude":-27.5,"longitude":-48.5,"retornar_ao_inicio":true,"metodo":"circuito_2opt","metricas":{"fonte":"mapbox_directions_restante","distancia_km":32.5,"tempo_minutos":130}}');
+      PERFORM pg_temp.check_result(result->>'sucesso'='true' AND (SELECT metricas_fonte='mapbox_directions_restante' AND distancia_otimizada_km=32.5 AND metricas_atualizadas_em IS NOT NULL FROM public.rotas_planejadas WHERE id=route_id),'reorder persists new verified road metrics atomically');
+      result:=public.reordenar_paradas_rota(route_id,reordered,reordered);
+      PERFORM pg_temp.check_result((SELECT metricas_fonte IS NULL AND metricas_atualizadas_em IS NULL FROM public.rotas_planejadas WHERE id=route_id),'reorder without calculation invalidates old estimates');
       UPDATE public.entregas SET status='entregue' WHERE id=extra_id;
     END;
     UPDATE public.empresa_membros SET status='suspenso' WHERE user_id=driver_a AND empresa_id=company_a;
@@ -248,6 +252,30 @@ BEGIN
     UPDATE public.empresa_membros SET status='aprovado' WHERE user_id=driver_a AND empresa_id=company_a;
     result:=public.registrar_conclusao_entrega(delivery_id,true);
     PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista autorizado registra entrega');
+    DECLARE
+      failure_id uuid; hist_before integer; count_before integer; mean_before numeric;
+    BEGIN
+      SELECT count(*) INTO hist_before FROM public.historico_atendimentos WHERE entrega_id=delivery_id;
+      SELECT total_entregas_realizadas,tempo_medio_minutos INTO count_before,mean_before FROM public.clientes_enderecos WHERE id=addr_id;
+      PERFORM set_config('role','authenticated',true);
+      result:=public.registrar_conclusao_entrega(delivery_id,true);
+      PERFORM set_config('role','postgres',true);
+      PERFORM pg_temp.check_result(result->>'codigo'='ENTREGA_JA_REGISTRADA' AND (SELECT count(*)=hist_before FROM public.historico_atendimentos WHERE entrega_id=delivery_id),'authenticated retry does not duplicate history');
+      PERFORM pg_temp.check_result((SELECT total_entregas_realizadas=count_before AND tempo_medio_minutos=mean_before FROM public.clientes_enderecos WHERE id=addr_id),'retry preserves count and mean');
+      result:=public.registrar_conclusao_entrega(delivery_id,false,'ausente');
+      PERFORM pg_temp.check_result(result->>'codigo'='TRANSICAO_INVALIDA','conflicting completion outcome rejected');
+      INSERT INTO public.entregas(empresa_id,codigo_rastreio,cliente_endereco_id,destinatario_nome,motorista_id,rota_id,status)
+      VALUES(company_a,'COMPLETION-FAILURE',addr_id,'Failure','c1000000-0000-0000-0000-000000000001',route_id,'em_transito') RETURNING id INTO failure_id;
+      result:=public.registrar_conclusao_entrega(failure_id,false,'  ');
+      PERFORM pg_temp.check_result(result->>'codigo'='MOTIVO_OBRIGATORIO','blank failure reason rejected');
+      result:=public.registrar_conclusao_entrega(failure_id,false,'ausente',0,0,now(),now()-interval '1 minute');
+      PERFORM pg_temp.check_result(result->>'codigo'='HORARIO_INVALIDO','reversed arrival and completion rejected');
+      PERFORM set_config('role','authenticated',true);
+      result:=public.registrar_conclusao_entrega(failure_id,false,'Cliente ausente',0,0,now()-interval '5 minutes',now());
+      PERFORM set_config('role','postgres',true);
+      PERFORM pg_temp.check_result(result->>'sucesso'='true' AND (SELECT status='tentativa_falha' FROM public.entregas WHERE id=failure_id),'authenticated driver records failed attempt');
+      PERFORM pg_temp.check_result((SELECT count(*)=1 AND bool_and(motivo_falha='Cliente ausente' AND NOT sucesso) FROM public.historico_atendimentos WHERE entrega_id=failure_id),'failure stores written reason exactly once');
+    END;
     result:=public.concluir_rota(route_id);
     PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista autorizado conclui rota atendida');
 END $tests$;

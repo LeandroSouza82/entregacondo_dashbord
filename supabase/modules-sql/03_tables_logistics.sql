@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS public.clientes_enderecos (
     cep VARCHAR(20) NOT NULL,
     latitude NUMERIC(10, 7) NOT NULL,
     longitude NUMERIC(10, 7) NOT NULL,
-    tempo_medio_minutos NUMERIC(5, 2) NOT NULL DEFAULT 15.00,
+    tempo_medio_minutos NUMERIC(8, 2) NOT NULL DEFAULT 15.00,
     total_entregas_realizadas INT NOT NULL DEFAULT 0,
     tipo_local VARCHAR(50) NOT NULL DEFAULT 'condominio_horizontal'
         CHECK (tipo_local IN ('condominio_horizontal', 'edificio_vertical', 'comercial', 'casa_rua')),
@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS public.rotas_planejadas (
     percentual_economia_km NUMERIC(5, 2) NOT NULL,
     percentual_economia_tempo NUMERIC(5, 2) NOT NULL,
     ordem_paradas_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metricas_fonte TEXT,
+    metricas_atualizadas_em TIMESTAMPTZ,
     configuracao_navegacao JSONB NOT NULL DEFAULT '{}'::jsonb,
     iniciada_em TIMESTAMPTZ,
     concluida_em TIMESTAMPTZ,

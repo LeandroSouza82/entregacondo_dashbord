@@ -453,6 +453,8 @@ export interface Database {
           tempo_otimizado_minutos: number
           percentual_economia_km: number
           percentual_economia_tempo: number
+          metricas_fonte: string | null
+          metricas_atualizadas_em: string | null
           ordem_paradas_json: Json
           iniciada_em: string | null
           concluida_em: string | null
@@ -471,6 +473,8 @@ export interface Database {
           tempo_otimizado_minutos: number
           percentual_economia_km: number
           percentual_economia_tempo: number
+          metricas_fonte?: string | null
+          metricas_atualizadas_em?: string | null
           ordem_paradas_json: Json
           iniciada_em?: string | null
           concluida_em?: string | null
