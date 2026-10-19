@@ -1,8 +1,3 @@
--- ==============================================================================
--- FUNÇÃO SQL: iniciar_rota.sql
--- Início de execução da rota pelo condutor atribuído. Idempotente.
--- ==============================================================================
-
 CREATE OR REPLACE FUNCTION public.iniciar_rota(
     p_rota_id UUID
 )
@@ -71,7 +66,8 @@ BEGIN
 
     -- Atualiza status da rota para em_execucao
     UPDATE public.rotas_planejadas
-    SET status = 'em_execucao'
+    SET status = 'em_execucao',
+        iniciada_em = COALESCE(iniciada_em, timezone('utc'::text, now()))
     WHERE id = v_rota.id;
 
     -- Atualiza status das entregas atribuídas para em_transito
@@ -94,4 +90,3 @@ BEGIN
     );
 END;
 $$;
-
