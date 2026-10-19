@@ -7,30 +7,31 @@ export async function salvarClienteEndereco(payload: NovoClienteEnderecoPayload)
   const empresaId = await requireCompanyId();
   if (payload.empresa_id && payload.empresa_id !== empresaId) throw new Error('Empresa inválida.');
 
-  const nomeFinal = (payload.nome_identificador || '').trim() ||
+  const nomeFinal = (payload.label || payload.nome_identificador || '').trim() ||
                     (payload.destinatario_padrao || '').trim() ||
-                    (payload.endereco_completo || '').split(',')[0].trim() ||
+                    (payload.full_address || payload.endereco_completo || '').split(',')[0].trim() ||
                     'Condomínio / Cliente';
 
-  const enderecoFinal = (payload.endereco_completo || '').trim() || 'Endereço informado';
+  const enderecoFinal = (payload.full_address || payload.endereco_completo || '').trim() || 'Endereço informado';
 
-  const lat = typeof payload.coordenadas?.lat === 'number' && !isNaN(payload.coordenadas.lat)
-    ? payload.coordenadas.lat
-    : -27.5954;
-  const lng = typeof payload.coordenadas?.lng === 'number' && !isNaN(payload.coordenadas.lng)
-    ? payload.coordenadas.lng
-    : -48.5480;
+  const latRaw = typeof payload.coordenadas?.lat === 'number' ? payload.coordenadas.lat : payload.lat;
+  const lngRaw = typeof payload.coordenadas?.lng === 'number' ? payload.coordenadas.lng : payload.lng;
+
+  const lat = typeof latRaw === 'number' && !isNaN(latRaw) ? latRaw : -27.5954;
+  const lng = typeof lngRaw === 'number' && !isNaN(lngRaw) ? lngRaw : -48.5480;
 
   const { data, error } = await supabase.rpc('salvar_cliente_endereco', {
     p_dados: {
       empresa_id: empresaId,
       nome_identificador: nomeFinal,
+      label: nomeFinal,
       nome: nomeFinal,
       nome_cliente: nomeFinal,
       cliente_nome: nomeFinal,
       condominio: nomeFinal,
       destinatario_padrao: payload.destinatario_padrao || null,
       endereco_completo: enderecoFinal,
+      full_address: enderecoFinal,
       endereco: enderecoFinal,
       logradouro: enderecoFinal,
       numero: '',
@@ -41,6 +42,7 @@ export async function salvarClienteEndereco(payload: NovoClienteEnderecoPayload)
       lat: lat,
       longitude: lng,
       lng: lng,
+      place_id: payload.place_id || null,
       total_entregas_realizadas: 0,
       tempo_medio_atendimento_min: 15,
       tempo_medio_minutos: 15,

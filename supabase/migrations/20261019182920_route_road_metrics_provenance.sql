@@ -74,7 +74,7 @@ BEGIN
     END IF;
 
     -- 3. Cálculo de hash do payload para conferência de consistência
-    v_payload_hash := encode(digest(p_dados::text, 'sha256'), 'hex');
+    v_payload_hash := encode(sha256(convert_to(p_dados::text, 'UTF8')), 'hex');
 
     -- 4. Serialização sob concorrência: bloqueia a linha do motorista
     SELECT * INTO v_motorista

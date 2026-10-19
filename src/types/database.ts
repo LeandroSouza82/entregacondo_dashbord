@@ -162,12 +162,14 @@ export interface Database {
           nome: string
           telefone: string
           email: string | null
+          veiculo_tipo?: 'moto' | 'carro' | 'caminhao' | string | null
           veiculo_modelo: string
           veiculo_placa: string
           status: 'disponivel' | 'em_rota' | 'pausado' | 'offline'
           ativo: boolean
           latitude_atual: number | null
           longitude_atual: number | null
+          localizacao_atualizada_em?: string | null
           capacidade_max_pacotes: number
           avaliacao_media: number
           created_at: string

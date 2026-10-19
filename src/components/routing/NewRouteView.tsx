@@ -7,6 +7,8 @@ import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
 import { ClienteCondominioSearchInput } from './ClienteCondominioSearchInput';
 import type { ClienteEnderecoItem } from '../../features/routes/types/clienteEndereco';
 import { salvarClienteEndereco } from '../../features/routes/services/salvarClienteEndereco';
+import { ObterIconeVeiculo } from '../../assets/icons/vehicles/VehicleIcons';
+import { normalizarTipoVeiculo } from '../../features/routes/utils/vehicleMovement';
 import { 
   Check, 
   MessageSquare, 
@@ -47,6 +49,9 @@ interface MotoristaItem {
   nome: string;
   iniciais: string;
   veiculo: string;
+  veiculoTipo?: string | null;
+  latitude_atual?: number | null;
+  longitude_atual?: number | null;
   status: string;
   corAvatar: string;
   empresa_id?: string;
@@ -163,6 +168,7 @@ export const NewRouteView: React.FC = () => {
 
   // Alertas de feedback
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
+  const [despachoEnviado, setDespachoEnviado] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
 
   // Lista de Entregas da Rota com restauração instantânea do rascunho
@@ -318,6 +324,9 @@ export const NewRouteView: React.FC = () => {
           nome: m.nome,
           iniciais: m.nome.split(' ').map((n: string) => n[0]).slice(0, 2).join(''),
           veiculo: m.veiculo_modelo || 'Moto Padrão',
+          veiculoTipo: m.veiculo_tipo,
+          latitude_atual: m.latitude_atual,
+          longitude_atual: m.longitude_atual,
           status: m.status || 'Disponível',
           corAvatar: '#0F1B2D',
           empresa_id: m.empresa_id
@@ -406,7 +415,7 @@ export const NewRouteView: React.FC = () => {
     }
   }, [blocoApto, empresaId]);
 
-  // Callback memoizado para seleção de endereço via Google Places ou base salva -> Auto-persiste no banco
+  // Callback memoizado para seleção de endereço via Google Places ou base salva
   const handleAddressSelect = useCallback((dados: {
     enderecoCompleto: string;
     nomeLocal?: string;
@@ -426,24 +435,7 @@ export const NewRouteView: React.FC = () => {
       coordenadas: dados.coordenadas,
     });
     setErroValidacao(null);
-
-    // GRAVAÇÃO IMEDIATA NO SUPABASE (Garante que todo endereço buscado fique na base própria)
-    if (empresaId && dados.coordenadas && dados.enderecoCompleto) {
-      void salvarClienteEndereco({
-        empresa_id: empresaId,
-        nome_identificador: nomeFinal,
-        destinatario_padrao: blocoApto.trim() || undefined,
-        endereco_completo: dados.enderecoCompleto,
-        coordenadas: dados.coordenadas,
-        observacoes_acesso: observacaoTexto.trim() || undefined,
-      }).then(() => {
-        setMensagemSucesso(`Local "${nomeFinal}" gravado na base da empresa para futuras entregas.`);
-        setTimeout(() => setMensagemSucesso(null), 4000);
-      }).catch((e) => {
-        console.warn('Persistência automática de endereço em background:', e);
-      });
-    }
-  }, [blocoApto, empresaId, nomeCliente, observacaoTexto]);
+  }, [blocoApto, nomeCliente]);
 
   const handleAdicionarEntrega = async () => {
     const nomeFinal = nomeCliente.trim() || blocoApto.trim() || enderecoTexto.trim().split(',')[0].trim();
@@ -474,7 +466,7 @@ export const NewRouteView: React.FC = () => {
     }
 
     const novoIdEntrega = crypto.randomUUID();
-    const novoIdClienteEndereco = crypto.randomUUID();
+    const novoIdClienteEndereco = `cli-${crypto.randomUUID()}`;
 
     const nova: PontoParada = {
       id: novoIdEntrega,
@@ -496,8 +488,8 @@ export const NewRouteView: React.FC = () => {
       setChipsCustomizados(salvarChipCustomizado(especificacaoOutro.trim()));
     }
 
-    // Persistência inteligente: salva para as próximas entregas se selecionado
-    if (salvarParaProximas && coords) {
+    // O despacho exige endereço gravado no banco: a parada é sempre persistida
+    if (coords) {
       try {
         const saved = await salvarClienteEndereco({
           empresa_id: empresaId,
@@ -672,6 +664,8 @@ export const NewRouteView: React.FC = () => {
         }
 
         setMensagemSucesso(`Rota inteligente com ${entregasDaRota.length} paradas gravada com sucesso no Supabase e despachada para ${motoristaSelecionado.nome}!`);
+        setDespachoEnviado(`Rota enviada com sucesso para ${motoristaSelecionado.nome}!`);
+        setTimeout(() => setDespachoEnviado(null), 6000);
         limparRascunhoRota();
         setEntregasDaRota([]);
         despachoKey.current = crypto.randomUUID();
@@ -729,6 +723,16 @@ export const NewRouteView: React.FC = () => {
         </div>
       </header>
 
+      {despachoEnviado && (
+        <div role="status" className="fixed top-6 right-6 z-[100] max-w-sm p-4 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center gap-3 shadow-2xl animate-fadeIn">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+          <span>{despachoEnviado}</span>
+          <button type="button" onClick={() => setDespachoEnviado(null)} aria-label="Fechar aviso" className="ml-1 opacity-80 hover:opacity-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Alertas de Feedback */}
       {mensagemSucesso && (
         <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-center gap-3 shadow-sm animate-fadeIn">
@@ -782,8 +786,9 @@ export const NewRouteView: React.FC = () => {
                       <span className="block font-bold text-sm text-[#0F1B2D] truncate">
                         {m.nome}
                       </span>
-                      <span className={`block text-xs truncate ${isSelected ? 'text-[#334155]' : 'text-[#516074]'}`}>
-                        {m.veiculo} · {m.status}
+                      <span className={`flex items-center gap-1.5 text-xs truncate ${isSelected ? 'text-[#334155]' : 'text-[#516074]'}`}>
+                        <ObterIconeVeiculo tipo={m.veiculoTipo || m.veiculo} size={15} />
+                        <span>{m.veiculo} · {m.status}</span>
                       </span>
                     </span>
                   </button>
@@ -954,7 +959,15 @@ export const NewRouteView: React.FC = () => {
                   onChange={setEnderecoTexto}
                   enderecosSalvos={[]}
                   empresaId={empresaId}
+                  coordenadas={coordenadasSelecionadas}
+                  nomeCondominio={nomeCliente}
+                  blocoApto={blocoApto}
+                  showSaveButton={true}
                   onAddressSelect={handleAddressSelect}
+                  onSalvoComSucesso={(labelSalvo) => {
+                    setMensagemSucesso(`Endereço "${labelSalvo}" salvo no banco para futuras buscas.`);
+                    setTimeout(() => setMensagemSucesso(null), 4000);
+                  }}
                 />
               </div>
 
@@ -1387,6 +1400,22 @@ export const NewRouteView: React.FC = () => {
               pontoPartida={pontoPartida}
               paradas={paradasParaOMapa}
               pontoPreview={pontoPreview}
+              veiculosAtivos={motoristaSelecionado ? [{
+                id: motoristaSelecionado.id,
+                nome: motoristaSelecionado.nome,
+                veiculo_tipo: normalizarTipoVeiculo(motoristaSelecionado.veiculoTipo, motoristaSelecionado.veiculo),
+                veiculo_modelo: motoristaSelecionado.veiculo,
+                veiculo_placa: '',
+                status: 'em_rota',
+                coordenadas: {
+                  lat: (motoristaSelecionado.latitude_atual && !isNaN(Number(motoristaSelecionado.latitude_atual)))
+                    ? Number(motoristaSelecionado.latitude_atual)
+                    : pontoPartida.coordenadas.lat,
+                  lng: (motoristaSelecionado.longitude_atual && !isNaN(Number(motoristaSelecionado.longitude_atual)))
+                    ? Number(motoristaSelecionado.longitude_atual)
+                    : pontoPartida.coordenadas.lng,
+                }
+              }] : []}
               otimizado={otimizarAutomatico}
             />
 

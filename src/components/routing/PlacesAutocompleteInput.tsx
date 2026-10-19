@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, Building, Loader2, Sparkles, Search, Globe } from 'lucide-react';
+import { MapPin, Building, Loader2, Sparkles, Search, Globe, Bookmark, Check } from 'lucide-react';
 import type { PontoCoordenada } from '../../types/logistics';
 import type { ClienteEnderecoItem } from '../../features/routes/types/clienteEndereco';
 import { 
   normalizarTexto, 
   pertenceAGrandeFlorianopolis, 
-  buscarClientesEnderecos,
   buscarSugestoesNominatim
 } from '../../features/routes/services/buscarClientesEnderecos';
+import { 
+  buscarEnderecosNoBanco, 
+  verificarEnderecoJaSalvo, 
+  salvarEnderecoCache 
+} from '../../features/routes/services/savedAddressesService';
 import { geocodificarEndereco } from '../../features/routes/services/routeOptimization';
 
 const GOOGLE_PLACES_KEY = import.meta.env.VITE_GOOGLE_PLACES_KEY || '';
@@ -31,6 +35,11 @@ interface PlacesAutocompleteInputProps {
   empresaId?: string;
   placeholder?: string;
   name?: string;
+  coordenadas?: PontoCoordenada | null;
+  nomeCondominio?: string;
+  blocoApto?: string;
+  showSaveButton?: boolean;
+  onSalvoComSucesso?: (item: ClienteEnderecoItem) => void;
 }
 
 export interface PlacePredictionItem {
@@ -50,13 +59,23 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
   empresaId,
   placeholder,
   name,
+  coordenadas,
+  nomeCondominio,
+  blocoApto,
+  showSaveButton = false,
+  onSalvoComSucesso,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<number | null>(null);
   const sessionTokenRef = useRef<string>(crypto.randomUUID());
+  const lastSelectedPlaceIdRef = useRef<string | null>(null);
+  const internalCoordsRef = useRef<PontoCoordenada | null>(null);
 
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isAlreadySaved, setIsAlreadySaved] = useState<boolean>(false);
+  const [erroSalvar, setErroSalvar] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<PlacePredictionItem[]>([]);
   const [enderecosDoBanco, setEnderecosDoBanco] = useState<ClienteEnderecoItem[]>([]);
 
@@ -76,9 +95,32 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     if (!value) {
       setPredictions([]);
       setEnderecosDoBanco([]);
+      setIsAlreadySaved(false);
       setIsOpen(false);
+    } else if (value.trim().length >= 4) {
+      // Verifica se o endereço atualmente preenchido já está registrado no banco
+      let active = true;
+      verificarEnderecoJaSalvo(value, empresaId).then(salvo => {
+        if (active) {
+          setIsAlreadySaved(Boolean(salvo));
+          if (salvo?.latitude && salvo?.longitude) {
+            internalCoordsRef.current = {
+              lat: Number(salvo.latitude),
+              lng: Number(salvo.longitude),
+            };
+          }
+        }
+      }).catch(() => {});
+      return () => { active = false; };
     }
-  }, [value]);
+  }, [value, empresaId]);
+
+  // Sincroniza coordenadas passadas externamente
+  useEffect(() => {
+    if (coordenadas) {
+      internalCoordsRef.current = coordenadas;
+    }
+  }, [coordenadas]);
 
   // Busca resiliente: tenta Google Places e faz fallback para Nominatim se Google falhar ou esgotar cota
   const fetchGooglePredictions = useCallback(async (query: string) => {
@@ -168,7 +210,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     }
   }, []);
 
-  // Busca "Banco Primeiro, Google/Nominatim Depois" com debounce protetivo de 480ms
+  // PRIORIDADE AO BANCO: Busca primeiro na base do Supabase com ilike, economizando requisições do Google
   const handleInputChange = (novoValor: string) => {
     onChange(novoValor);
     setIsOpen(true);
@@ -181,42 +223,63 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
       setIsLoading(true);
       debounceTimerRef.current = window.setTimeout(async () => {
         try {
-          // Executa em paralelo a consulta local no banco e o autocomplete Google/Nominatim
-          const [doBanco] = await Promise.all([
-            buscarClientesEnderecos(novoValor, empresaId).catch(() => []),
-            fetchGooglePredictions(novoValor).catch(() => {}),
-          ]);
+          // 1. PRIMEIRO: Consulta local no Supabase (zero chamadas de API externa)
+          const doBanco = await buscarEnderecosNoBanco(novoValor, empresaId).catch(() => []);
           setEnderecosDoBanco(doBanco || []);
+
+          // Checa se algum item retornado tem correspondência exata
+          const normDigitado = normalizarTexto(novoValor);
+          const correspondenciaExata = (doBanco || []).some(item => {
+            const normSalvo = normalizarTexto(item.endereco_completo || '');
+            const normNome = normalizarTexto(item.nome_identificador || '');
+            return normSalvo === normDigitado || normNome === normDigitado;
+          });
+
+          if (correspondenciaExata) {
+            setIsAlreadySaved(true);
+            // Economia máxima: correspondência exata encontrada no banco, não consulta o Google Places
+            setPredictions([]);
+          } else {
+            // 2. SEGUNDO: Somente se não houver correspondência exata ou se usuário digitou além dos salvos
+            await fetchGooglePredictions(novoValor).catch(() => {});
+          }
         } finally {
           setIsLoading(false);
         }
-      }, 480);
+      }, 350);
     } else {
       setPredictions([]);
       setEnderecosDoBanco([]);
+      setIsAlreadySaved(false);
       setIsLoading(false);
     }
   };
 
-  // Seleção de sugestão (Google Places ou Nominatim) -> Geocoding e preenchimento
+  // Seleção de sugestão externa (Google Places ou Nominatim) -> Geocoding e preenchimento
   const handleSelectPrediction = async (item: PlacePredictionItem) => {
     onChange(item.fullText);
     setIsOpen(false);
     setIsLoading(true);
+    lastSelectedPlaceIdRef.current = item.placeId;
 
     try {
       // Se a sugestão já tiver coordenadas (ex: proveniente do Nominatim), aplica imediatamente sem custo
       if (item.coordenadas && typeof item.coordenadas.lat === 'number' && !isNaN(item.coordenadas.lat)) {
+        internalCoordsRef.current = item.coordenadas;
         onAddressSelect({
           enderecoCompleto: item.fullText,
           nomeLocal: item.mainText,
           coordenadas: item.coordenadas,
         });
+
+        // Checa se por acaso já existe salvo
+        const salvo = await verificarEnderecoJaSalvo(item.fullText, empresaId);
+        setIsAlreadySaved(Boolean(salvo));
         return;
       }
 
       // Se for Google Places, busca os detalhes com fallback
-      let coordenadas: PontoCoordenada = {
+      let coords: PontoCoordenada = {
         lat: -27.5954,
         lng: -48.5480,
       };
@@ -227,32 +290,37 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
           const res = await fetch(detailsUrl);
           const data = await res.json();
           if (data.location?.latitude && data.location?.longitude) {
-            coordenadas = {
+            coords = {
               lat: data.location.latitude,
               lng: data.location.longitude,
             };
           } else {
             const geo = await geocodificarEndereco(item.fullText);
-            if (geo?.coordenadas) coordenadas = geo.coordenadas;
+            if (geo?.coordenadas) coords = geo.coordenadas;
           }
         } catch {
           const geo = await geocodificarEndereco(item.fullText);
-          if (geo?.coordenadas) coordenadas = geo.coordenadas;
+          if (geo?.coordenadas) coords = geo.coordenadas;
         }
       } else {
         const geo = await geocodificarEndereco(item.fullText);
-        if (geo?.coordenadas) coordenadas = geo.coordenadas;
+        if (geo?.coordenadas) coords = geo.coordenadas;
       }
 
       const nomeLocal = item.mainText;
       const enderecoFinal = item.fullText;
+      internalCoordsRef.current = coords;
 
       onChange(enderecoFinal);
       onAddressSelect({
         enderecoCompleto: enderecoFinal,
         nomeLocal,
-        coordenadas,
+        coordenadas: coords,
       });
+
+      // Checa se o local já existe no banco
+      const salvo = await verificarEnderecoJaSalvo(enderecoFinal, empresaId);
+      setIsAlreadySaved(Boolean(salvo));
 
       sessionTokenRef.current = crypto.randomUUID();
     } catch (err) {
@@ -267,8 +335,14 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     setTimeout(async () => {
       if (value.trim().length >= 4) {
         try {
+          const salvo = await verificarEnderecoJaSalvo(value.trim(), empresaId);
+          if (salvo) {
+            setIsAlreadySaved(true);
+            return;
+          }
           const geo = await geocodificarEndereco(value.trim());
           if (geo && geo.coordenadas) {
+            internalCoordsRef.current = geo.coordenadas;
             onAddressSelect({
               enderecoCompleto: geo.endereco || value.trim(),
               nomeLocal: geo.nome || value.trim().split(',')[0].trim(),
@@ -282,19 +356,75 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     }, 250);
   };
 
-  // Seleção de item da base do banco
+  // Seleção direta de item vindo do banco: usa diretamente as coordenadas sem gastar API
   const handleSelectDoBanco = (item: ClienteEnderecoItem) => {
     onChange(item.endereco_completo);
     setIsOpen(false);
+    setIsAlreadySaved(true);
+    const coords: PontoCoordenada = {
+      lat: Number(item.latitude),
+      lng: Number(item.longitude),
+    };
+    internalCoordsRef.current = coords;
 
     onAddressSelect({
       enderecoCompleto: item.endereco_completo,
       nomeLocal: item.nome_identificador,
-      coordenadas: {
-        lat: Number(item.latitude),
-        lng: Number(item.longitude),
-      },
+      coordenadas: coords,
     });
+  };
+
+  // AÇÃO DIRETA: Gravação do endereço no banco com feedback visual
+  const handleSalvarEnderecoDireto = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const enderecoLimpo = value.trim();
+    if (!enderecoLimpo || isSaving || isAlreadySaved) return;
+
+    setIsSaving(true);
+    setErroSalvar(null);
+    try {
+      let coords = coordenadas || internalCoordsRef.current;
+      let label = (nomeCondominio || '').trim();
+
+      if (!coords) {
+        const geo = await geocodificarEndereco(enderecoLimpo);
+        if (geo?.coordenadas) {
+          coords = geo.coordenadas;
+          if (!label) label = geo.nome || enderecoLimpo.split(',')[0].trim();
+        }
+      }
+
+      if (!coords) {
+        coords = { lat: -27.5954, lng: -48.5480 };
+      }
+
+      if (!label) {
+        label = enderecoLimpo.split(',')[0].trim() || 'Condomínio / Cliente';
+      }
+
+      const salvo = await salvarEnderecoCache({
+        empresa_id: empresaId,
+        label,
+        nome_identificador: label,
+        full_address: enderecoLimpo,
+        endereco_completo: enderecoLimpo,
+        coordenadas: coords,
+        lat: coords.lat,
+        lng: coords.lng,
+        destinatario_padrao: blocoApto || null,
+        place_id: lastSelectedPlaceIdRef.current || null,
+      });
+
+      setIsAlreadySaved(true);
+      setEnderecosDoBanco(prev => [salvo, ...prev.filter(p => p.id !== salvo.id)]);
+      onSalvoComSucesso?.(salvo);
+    } catch (err) {
+      setErroSalvar(err instanceof Error ? err.message : 'Não foi possível salvar o endereço.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Filtra endereços salvos passados via prop (compatibilidade retroativa)
@@ -304,6 +434,8 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     const q = normalizarTexto(value);
     return normalizarTexto(item.endereco).includes(q) || normalizarTexto(item.complemento).includes(q);
   });
+
+  const canShowSaveButton = showSaveButton && value.trim().length >= 3;
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -345,19 +477,64 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
             }
           }}
           placeholder={placeholder || "Digite o endereço ou condomínio no Google Places..."}
-          className="h-11 border-2 border-[#1D4ED8] rounded-[10px] pl-3.5 pr-10 text-sm text-[#0F1B2D] bg-white w-full font-medium focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/20 shadow-sm transition-all"
+          className={`h-11 border-2 border-[#1D4ED8] rounded-[10px] pl-3.5 ${
+            canShowSaveButton ? 'pr-28' : 'pr-10'
+          } text-sm text-[#0F1B2D] bg-white w-full font-medium focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/20 shadow-sm transition-all`}
         />
 
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none">
-          {isLoading ? (
-            <Loader2 className="w-4 h-4 text-[#1D4ED8] animate-spin" />
-          ) : GOOGLE_PLACES_KEY ? (
-            <Sparkles className="w-4 h-4 text-[#1D4ED8]" />
-          ) : (
-            <Search className="w-4 h-4 text-slate-400" />
+        {/* Ações à Direita: Botão de Salvar (Marcação Vermelha) + Indicador da API */}
+        <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 z-10">
+          {/* BOTÃO DE SALVAR NO CAMPO (Marcação Vermelha) */}
+          {canShowSaveButton && (
+            <button
+              type="button"
+              disabled={isAlreadySaved || isSaving}
+              onClick={handleSalvarEnderecoDireto}
+              title={
+                isAlreadySaved
+                  ? "Endereço já cadastrado no banco de dados"
+                  : "Salvar este endereço no banco de dados"
+              }
+              className={`h-7 px-2.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all select-none ${
+                isAlreadySaved
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                  : isSaving
+                  ? 'bg-rose-50 text-rose-500 border border-rose-200 cursor-wait opacity-80'
+                  : 'bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 border border-rose-200 shadow-2xs cursor-pointer active:scale-95'
+              }`}
+            >
+              {isSaving ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
+              ) : isAlreadySaved ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[2.5]" />
+                  <span className="hidden sm:inline">Salvo</span>
+                </>
+              ) : (
+                <>
+                  <Bookmark className="w-3.5 h-3.5 text-rose-500 fill-rose-500/20" />
+                  <span>Salvar</span>
+                </>
+              )}
+            </button>
           )}
+
+          {/* Ícone Indicador de Status / Provedor */}
+          <div className="flex items-center justify-center w-6 h-6 pointer-events-none">
+            {isLoading ? (
+              <Loader2 className="w-4 h-4 text-[#1D4ED8] animate-spin" />
+            ) : GOOGLE_PLACES_KEY ? (
+              <Sparkles className="w-4 h-4 text-[#1D4ED8]" />
+            ) : (
+              <Search className="w-4 h-4 text-slate-400" />
+            )}
+          </div>
         </div>
       </div>
+
+      {erroSalvar && (
+        <p className="mt-1 text-xs font-semibold text-rose-600">Falha ao salvar: {erroSalvar}</p>
+      )}
 
       {/* Dropdown Inteligente de Resultados */}
       {isOpen && (

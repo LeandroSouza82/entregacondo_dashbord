@@ -22,6 +22,10 @@ import {
   obterPontoPartidaPadrao, 
   type PontoPartidaItem 
 } from '../../features/routes/services/routeOptimization';
+import { 
+  normalizarTipoVeiculo, 
+  type MotoristaVeiculoMapa 
+} from '../../features/routes/utils/vehicleMovement';
 
 type Delivery = Database['public']['Tables']['entregas']['Row'] & {
   clientes_enderecos?: Database['public']['Tables']['clientes_enderecos']['Row'] | null;
@@ -40,6 +44,7 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
   const [paradasMapa, setParadasMapa] = useState<PontoParada[]>([]);
   const [pontoPartida, setPontoPartida] = useState<PontoPartidaItem>(() => obterPontoPartidaPadrao());
   const [drivers, setDrivers] = useState<number>(0);
+  const [veiculosAtivos, setVeiculosAtivos] = useState<MotoristaVeiculoMapa[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [revision, setRevision] = useState<number>(0);
@@ -160,18 +165,56 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
             }).filter(p => Number.isFinite(p.coordenadas.lat) && Number.isFinite(p.coordenadas.lng) && Math.abs(p.coordenadas.lat) <= 90 && Math.abs(p.coordenadas.lng) <= 180);
         }
 
-        // 4. Consulta motoristas ativos com tratamento seguro
+        // 4. Consulta motoristas e veículos ativos com localização em tempo real
         let totalMotoristas = 0;
+        let veiculosLista: MotoristaVeiculoMapa[] = [];
         if (companyId) {
           try {
-            const { count, error } = await supabase
+            const { data: motData, count, error } = await supabase
               .from('motoristas')
-              .select('id', { count: 'exact', head: true })
+              .select('*', { count: 'exact' })
               .eq('empresa_id', companyId)
               .eq('ativo', true);
 
-            if (!error && typeof count === 'number') {
-              totalMotoristas = count;
+            if (!error && Array.isArray(motData)) {
+              totalMotoristas = count ?? motData.length;
+              veiculosLista = motData.map((m) => {
+                const tipo = normalizarTipoVeiculo(m.veiculo_tipo, m.veiculo_modelo);
+                const rotaDoMotorista = rotasCarregadas.find(r => r.motorista_id === m.id && r.status !== 'cancelada');
+
+                let lat = m.latitude_atual ? Number(m.latitude_atual) : NaN;
+                let lng = m.longitude_atual ? Number(m.longitude_atual) : NaN;
+
+                // Se ainda não houver GPS ao vivo, utiliza a origem da rota ou a primeira parada
+                if ((isNaN(lat) || isNaN(lng)) && rotaDoMotorista) {
+                  const cfg = rotaDoMotorista.configuracao_navegacao;
+                  if (cfg?.latitude && cfg?.longitude) {
+                    lat = Number(cfg.latitude);
+                    lng = Number(cfg.longitude);
+                  } else {
+                    const primeiraParada = paradasDoMapa.find(p => p.rotaId === rotaDoMotorista.id);
+                    if (primeiraParada) {
+                      lat = primeiraParada.coordenadas.lat;
+                      lng = primeiraParada.coordenadas.lng;
+                    }
+                  }
+                }
+
+                return {
+                  id: m.id,
+                  nome: m.nome,
+                  veiculo_tipo: tipo,
+                  veiculo_modelo: m.veiculo_modelo || 'Veículo Padrão',
+                  veiculo_placa: m.veiculo_placa || '',
+                  status: (m.status as any) || (rotaDoMotorista ? 'em_rota' : 'disponivel'),
+                  coordenadas: {
+                    lat: !isNaN(lat) ? lat : -27.5954,
+                    lng: !isNaN(lng) ? lng : -48.5480,
+                  },
+                  localizacao_atualizada_em: m.localizacao_atualizada_em || undefined,
+                  rota_id: rotaDoMotorista?.id,
+                };
+              }).filter(v => Number.isFinite(v.coordenadas.lat) && Number.isFinite(v.coordenadas.lng));
             }
           } catch (e) {
             console.warn('[OverviewView] Consulta de motoristas retornou vazio ou erro silenciado:', e);
@@ -184,6 +227,7 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
           setParadasMapa(paradasDoMapa);
           setPontoPartida(obterPontoPartidaPadrao());
           setDrivers(totalMotoristas);
+          setVeiculosAtivos(veiculosLista);
         }
       } catch (err) {
         console.warn('[OverviewView] Erro geral capturado de forma resiliente:', err);
@@ -202,10 +246,26 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
     }
 
     void loadData();
-    const refreshTimer = window.setInterval(() => { if (document.visibilityState === "visible") void loadData(); }, 15000);
+
+    // Sincronização em tempo real de posições de motoristas via canal do Supabase
+    const canalMotoristas = supabase
+      .channel('realtime_fleet_overview')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'motoristas' },
+        () => {
+          if (document.visibilityState === 'visible') void loadData();
+        }
+      )
+      .subscribe();
+
+    const refreshTimer = window.setInterval(() => { 
+      if (document.visibilityState === "visible") void loadData(); 
+    }, 8000);
 
     return () => {
       window.clearInterval(refreshTimer);
+      void supabase.removeChannel(canalMotoristas);
       active = false;
     };
   }, [revision]);
@@ -357,6 +417,7 @@ export function OverviewView({ onGoToOptimizer, onOpenNewDelivery }: OverviewVie
             routeOrigins={Object.fromEntries(rotasPlanejadas.map(r => [r.id, r.configuracao_navegacao || {}]))}
             pontoPartida={pontoPartida}
             paradas={paradasMapa}
+            veiculosAtivos={veiculosAtivos}
             otimizado={true}
           />
         </div>

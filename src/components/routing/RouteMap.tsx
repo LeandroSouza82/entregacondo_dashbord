@@ -4,6 +4,8 @@ import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import type { Feature, MultiLineString } from 'geojson';
 import { fetchRoadGeometry, type RoadCoordinate } from '../../features/routes/services/roadGeometry';
 import { MapPin, Map as MapIcon, Globe, Moon } from 'lucide-react';
+import { VehicleMapMarker } from './VehicleMapMarker';
+import { type MotoristaVeiculoMapa, calcularBearing } from '../../features/routes/utils/vehicleMovement';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
 
@@ -41,6 +43,8 @@ interface RouteMapProps {
   otimizado?: boolean;
   showStartPoint?: boolean;
   routeOrigins?: Record<string, { latitude?: number; longitude?: number; retornar_ao_inicio?: boolean }>;
+  veiculosAtivos?: MotoristaVeiculoMapa[];
+  onVeiculoClick?: (veiculo: MotoristaVeiculoMapa) => void;
 }
 
 export const RouteMap: React.FC<RouteMapProps> = ({
@@ -50,9 +54,13 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   otimizado = true,
   showStartPoint = true,
   routeOrigins,
+  veiculosAtivos = [],
+  onVeiculoClick,
 }) => {
   const mapRef = useRef<MapRef | null>(null);
   const [estiloAtual, setEstiloAtual] = useState<string>('mapbox://styles/mapbox/streets-v12');
+  const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState<string | null>(null);
+  const posicoesAnterioresRef = useRef<Record<string, { lat: number; lng: number }>>({});
   const [popupInfo, setPopupInfo] = useState<{
     longitude: number;
     latitude: number;
@@ -61,6 +69,24 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     tempo?: number;
   } | null>(null);
 
+  // Calcula e memoriza dinamicamente o bearing (sentido da via) de cada veículo
+  const veiculosComBearing = useMemo(() => {
+    return (veiculosAtivos || []).map((v) => {
+      const prev = posicoesAnterioresRef.current[v.id];
+      let bearing = v.coordenadas.bearing ?? 0;
+      if (prev && (prev.lat !== v.coordenadas.lat || prev.lng !== v.coordenadas.lng)) {
+        bearing = calcularBearing(prev.lat, prev.lng, v.coordenadas.lat, v.coordenadas.lng);
+      }
+      posicoesAnterioresRef.current[v.id] = { lat: v.coordenadas.lat, lng: v.coordenadas.lng };
+      return {
+        ...v,
+        coordenadas: {
+          ...v.coordenadas,
+          bearing,
+        },
+      };
+    });
+  }, [veiculosAtivos]);
   // Initial Viewport centrado com useMemo
   const initialViewState = useMemo(() => {
     return {
@@ -137,6 +163,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     ...(showStartPoint ? [[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat]] : plannedOrigins.map(o => o.coordinates)),
     ...paradas.map(p => [p.coordenadas.lng, p.coordenadas.lat]),
     ...(pontoPreview ? [[pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]] : []),
+    ...veiculosComBearing.map(v => [v.coordenadas.lng, v.coordenadas.lat]),
   ]);
   const fitRouteBounds = useCallback(() => {
     if (!mapRef.current) return;
@@ -329,11 +356,35 @@ export const RouteMap: React.FC<RouteMapProps> = ({
             </div>
           </Marker>}
 
-          {!showStartPoint && plannedOrigins.map(origin => (
-            <Marker key={origin.id} longitude={origin.coordinates[0]} latitude={origin.coordinates[1]} anchor="center">
-              <div title="Posição do motorista no momento da organização" className="rounded-md bg-navy-900 text-white text-xs px-2 py-1 border-2 border-white">Origem do motorista</div>
-            </Marker>
+          {/* Marcadores de Origem do Motorista (apenas se o veículo não estiver ativo) */}
+          {!showStartPoint && plannedOrigins
+            .filter(origin => !veiculosComBearing.some(v => v.rota_id === origin.id))
+            .map(origin => (
+              <Marker key={origin.id} longitude={origin.coordinates[0]} latitude={origin.coordinates[1]} anchor="center">
+                <div title="Posição do motorista no momento da organização" className="rounded-md bg-navy-900 text-white text-xs px-2 py-1 border-2 border-white">Origem do motorista</div>
+              </Marker>
+            ))}
+
+          {/* Veículos em Tempo Real sobre a Rota (Moto, Carro ou Caminhão) */}
+          {veiculosComBearing.map(veiculo => (
+            <VehicleMapMarker
+              key={veiculo.id}
+              veiculo={veiculo}
+              selecionado={veiculoSelecionadoId === veiculo.id}
+              onClick={(v) => {
+                setVeiculoSelecionadoId(v.id);
+                setPopupInfo({
+                  longitude: v.coordenadas.lng,
+                  latitude: v.coordenadas.lat,
+                  titulo: `${v.nome} (${v.veiculo_tipo.toUpperCase()})`,
+                  subtitulo: `${v.veiculo_modelo} · ${v.veiculo_placa ? `Placa: ${v.veiculo_placa}` : 'Em operação'}`,
+                  tempo: v.status === 'em_rota' ? 0 : undefined,
+                });
+                onVeiculoClick?.(v);
+              }}
+            />
           ))}
+
           {/* Marcadores das Paradas da Rota */}
           {renderedMarkers}
 
@@ -394,6 +445,11 @@ export const RouteMap: React.FC<RouteMapProps> = ({
         <span className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-[#1D4ED8]"></span>
           <span className="font-medium">{paradas.length} paradas na rota</span>
+          {veiculosComBearing.length > 0 && (
+            <span className="font-semibold text-emerald-700 ml-2">
+              · {veiculosComBearing.length} {veiculosComBearing.length === 1 ? 'veículo monitorado' : 'veículos monitorados'}
+            </span>
+          )}
         </span>
         <span className="font-semibold text-emerald-700">{showStartPoint ? 'Sequência planejada' : 'Rotas despachadas'}</span>
       </div>
