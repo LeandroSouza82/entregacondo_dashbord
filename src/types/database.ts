@@ -9,6 +9,13 @@ export type Json =
 export interface Database {
   public: {
     Tables: {
+      entrega_comprovantes: {
+        Row: {entrega_id:string;empresa_id:string;registrado_por:string;recebedor_tipo:string;recebedor_nome:string|null;observacao:string|null;foto_path:string|null;assinatura_path:string|null;chegada_em:string;concluida_em:string;duracao_segundos:number;latitude:number|null;longitude:number|null;created_at:string}
+        Insert: {entrega_id:string;empresa_id:string;registrado_por:string;recebedor_tipo:string;chegada_em:string;concluida_em:string;duracao_segundos:number}
+        Update: never
+        Relationships: [{foreignKeyName:'entrega_comprovantes_entrega_id_fkey';columns:['entrega_id'];isOneToOne:true;referencedRelation:'entregas';referencedColumns:['id']}]
+      }
+
       empresas: {
         Row: {
           id: string

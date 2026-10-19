@@ -276,6 +276,33 @@ BEGIN
       PERFORM pg_temp.check_result(result->>'sucesso'='true' AND (SELECT status='tentativa_falha' FROM public.entregas WHERE id=failure_id),'authenticated driver records failed attempt');
       PERFORM pg_temp.check_result((SELECT count(*)=1 AND bool_and(motivo_falha='Cliente ausente' AND NOT sucesso) FROM public.historico_atendimentos WHERE entrega_id=failure_id),'failure stores written reason exactly once');
     END;
+    DECLARE
+      proof_id uuid; t timestamptz:=now()-interval '95 seconds'; photo text; receipt jsonb;
+    BEGIN
+      INSERT INTO public.entregas(empresa_id,codigo_rastreio,cliente_endereco_id,destinatario_nome,motorista_id,rota_id,status)
+      VALUES(company_a,'RECEIPT-TEST',addr_id,'Receipt','c1000000-0000-0000-0000-000000000001',route_id,'em_transito') RETURNING id INTO proof_id;
+      result:=public.iniciar_atendimento_entrega(proof_id,t);
+      PERFORM pg_temp.check_result(result->>'sucesso'='true','explicit arrival persisted');
+      result:=public.iniciar_atendimento_entrega(proof_id,now());
+      PERFORM pg_temp.check_result((result->>'chegada_em')::timestamptz=t,'arrival retry never resets timer');
+      result:=public.concluir_atendimento_entrega(proof_id,true,t,now(),'{}');
+      PERFORM pg_temp.check_result(result->>'sucesso'='false' AND (SELECT status='em_transito' FROM public.entregas WHERE id=proof_id),'receiver required before success');
+      photo:=company_a::text||'/'||driver_a::text||'/'||proof_id::text||'/photo.jpg';
+      receipt:=jsonb_build_object('recebedor_tipo','zelador','recebedor_nome','Pessoa de teste','foto_path',photo);
+      result:=public.concluir_atendimento_entrega(proof_id,true,t,now(),receipt);
+      PERFORM pg_temp.check_result(result->>'sucesso'='false','missing photo object rejected');
+      INSERT INTO storage.objects(bucket_id,name) VALUES('entregas-comprovantes',photo);
+      PERFORM set_config('role','authenticated',true);
+      result:=public.concluir_atendimento_entrega(proof_id,true,t,now(),receipt);
+      PERFORM set_config('role','postgres',true);
+      PERFORM pg_temp.check_result(result->>'sucesso'='true' AND (SELECT duracao_segundos=95 AND recebedor_tipo='zelador' AND foto_path=photo FROM public.entrega_comprovantes WHERE entrega_id=proof_id),'receipt and exact elapsed seconds committed');
+      result:=public.concluir_atendimento_entrega(proof_id,true,t,now(),jsonb_build_object('recebedor_tipo','vizinho'));
+      PERFORM pg_temp.check_result(result->>'codigo'='ENTREGA_JA_REGISTRADA' AND (SELECT count(*)=1 FROM public.historico_atendimentos WHERE entrega_id=proof_id) AND (SELECT recebedor_tipo='zelador' FROM public.entrega_comprovantes WHERE entrega_id=proof_id),'receipt retry is immutable and idempotent');
+      PERFORM set_config('request.jwt.claim.sub',admin_b::text,true);
+      result:=public.iniciar_atendimento_entrega(proof_id,t);
+      PERFORM pg_temp.check_result(result->>'sucesso'='false','foreign company cannot start attendance');
+      PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+    END;
     result:=public.concluir_rota(route_id);
     PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista autorizado conclui rota atendida');
 END $tests$;

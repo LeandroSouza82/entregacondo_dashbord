@@ -1,3 +1,4 @@
+import { estimateServiceTimes, type ServiceSample } from '../../features/routes/services/serviceTimeEstimates';
 import { fetchRoadPlan, type RoadCoordinate } from '../../features/routes/services/roadGeometry';
 import { requireCompanyId } from '../../lib/company';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -335,6 +336,19 @@ export const NewRouteView: React.FC = () => {
     return () => { active = false; };
   }, []);
   const motoristaSelecionado = MOTORISTAS.find(m => m.id === motoristaAtivo);
+  const serviceKey = JSON.stringify([empresaId,motoristaAtivo,paradasParaOMapa.map(p=>p.clienteEnderecoId)]);
+  const [serviceHistory,setServiceHistory]=useState<{key:string;samples:ServiceSample[]}|null>(null);
+  useEffect(()=>{
+    let active=true;
+    const [company,driver,addresses]=JSON.parse(serviceKey) as [string,string,string[]];
+    if(!company||!driver||!addresses.length)return ()=>{active=false;};
+    // Receipt timestamps identify explicit arrival/finish records; legacy guessed times are excluded.
+    void supabase.from('entrega_comprovantes').select('duracao_segundos, entregas!inner(cliente_endereco_id,motorista_id)').eq('empresa_id',company).neq('recebedor_tipo','tentativa_falha').in('entregas.cliente_endereco_id',addresses).order('concluida_em',{ascending:false}).limit(1000)
+      .then(({data,error})=>{if(!active)return;setServiceHistory(error?null:{key:serviceKey,samples:(data||[]).map(r=>({addressId:r.entregas.cliente_endereco_id,driverId:r.entregas.motorista_id||'',minutes:r.duracao_segundos/60}))});});
+    return ()=>{active=false;};
+  },[serviceKey]);
+  const serviceEstimate=estimateServiceTimes(paradasParaOMapa.map(p=>p.clienteEnderecoId),motoristaAtivo,serviceHistory?.key===serviceKey?serviceHistory.samples:[]);
+
 
   // Callback inteligente: ao selecionar um cliente/condomínio da base salva (0 chamadas de API)
   const handleSelectClienteCondominio = useCallback((item: ClienteEnderecoItem) => {
@@ -1414,6 +1428,13 @@ export const NewRouteView: React.FC = () => {
                 </div>
               </div>
 
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-bold">Tempo de atendimento pelo histórico</p>
+                <p>{serviceEstimate.covered>0 ? `${Math.ceil(serviceEstimate.minutes)} min em ${serviceEstimate.covered} de ${serviceEstimate.total} paradas com registros reais` : 'Sem histórico de atendimento para estas paradas.'}</p>
+                {serviceEstimate.covered>0 && <p className="text-xs mt-1">{serviceEstimate.driverSpecific} parada(s) com histórico deste motorista; demais usam registros reais do local.</p>}
+                <p className="font-semibold mt-2">{serviceEstimate.complete && verifiedTotals ? `Deslocamento + atendimento: ${formatarTempoMinutos(Math.ceil(selectedMin+serviceEstimate.minutes))}` : 'Jornada total ainda sem estimativa completa.'}</p>
+                <p className="text-xs mt-1">Confira a jornada e as pausas do motorista. O histórico melhora as estimativas; não garante o horário de término.</p>
+              </div>
               {/* Card Destaque Verde de Economia */}
               <div className="flex items-center gap-3 p-3.5 rounded-xl bg-[#DDF3E4] text-[#14532D]">
                 <div className="text-2xl font-extrabold leading-none">

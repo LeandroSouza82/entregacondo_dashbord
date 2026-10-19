@@ -43,6 +43,7 @@ const FILE_ORDER = [
   path.join(FUNCTIONS_DIR, 'reordenar_paradas_rota.sql'),
   path.join(FUNCTIONS_DIR, 'concluir_rota.sql'),
   path.join(FUNCTIONS_DIR, 'registrar_conclusao_entrega.sql'),
+  path.join(FUNCTIONS_DIR, 'concluir_atendimento_entrega.sql'),
   path.join(FUNCTIONS_DIR, 'obter_meu_status_acesso.sql'),
   path.join(FUNCTIONS_DIR, 'sincronizar_meu_perfil.sql'),
   path.join(FUNCTIONS_DIR, 'salvar_cliente_endereco.sql'),
