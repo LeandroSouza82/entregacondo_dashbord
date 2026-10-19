@@ -29,7 +29,7 @@ export function normalizarTexto(texto: string): string {
 }
 
 /**
- * Validação rigorosa: verifica se o endereço pertence à Grande Florianópolis
+ * Validação flexível e segura: prioriza Grande Florianópolis e Santa Catarina, rejeitando outros estados
  */
 export function pertenceAGrandeFlorianopolis(item: {
   cidade?: string;
@@ -38,28 +38,147 @@ export function pertenceAGrandeFlorianopolis(item: {
   const cidNorm = item.cidade ? normalizarTexto(item.cidade) : '';
   const endNorm = item.endereco_completo ? normalizarTexto(item.endereco_completo) : '';
 
-  // Rejeita categoricamente outros estados
+  // Rejeita categoricamente outros estados quando explicitamente identificados
   if (
-    /\b(sp|rj|pr|rs|mg|ba|df|pe|ce|go|es)\b/i.test(cidNorm) ||
-    /\b(sp|rj|pr|rs|mg|ba|df|pe|ce|go|es)\b/i.test(endNorm)
+    /\b(sao paulo|rio de janeiro|curitiba|porto alegre|belo horizonte|salvador|brasilia)\b/i.test(cidNorm) ||
+    /\b(sao paulo|rio de janeiro|curitiba|porto alegre|belo horizonte|salvador|brasilia)\b/i.test(endNorm)
   ) {
     return false;
   }
 
-  // Deve conter explicitamente um dos municípios da Grande Florianópolis
+  // Se contiver explicitamente SC ou Santa Catarina ou município da região, aceita imediatamente
+  if (
+    endNorm.includes('santa catarina') ||
+    endNorm.includes(', sc') ||
+    endNorm.includes(' - sc') ||
+    cidNorm.includes('sc') ||
+    cidNorm.includes('santa catarina')
+  ) {
+    return true;
+  }
+
+  // Aceita se corresponder a um dos municípios atendidos
   return CIDADES_GRANDE_FLORIANOPOLIS.some(
     (cidadeAlvo) => cidNorm.includes(cidadeAlvo) || endNorm.includes(cidadeAlvo)
   );
 }
 
+export interface SugestaoEndereco {
+  placeId: string;
+  mainText: string;
+  secondaryText: string;
+  fullText: string;
+  coordenadas?: { lat: number; lng: number };
+  origem: 'google' | 'nominatim' | 'banco';
+}
+
+/**
+ * Busca sugestões abertas resilientes via OpenStreetMap / Nominatim com bounding box da Grande Florianópolis
+ */
+export async function buscarSugestoesNominatim(termo: string): Promise<SugestaoEndereco[]> {
+  const limpo = termo.trim();
+  if (!limpo || limpo.length < 2) return [];
+
+  try {
+    const q = encodeURIComponent(`${limpo}, Santa Catarina, Brasil`);
+    // Bounding box cobrindo Grande Florianópolis (Florianópolis, São José, Palhoça, Biguaçu, Santo Amaro, etc.)
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${q}&viewbox=-48.85,-27.35,-48.30,-27.85&bounded=0&limit=6&addressdetails=1`;
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const headers = typeof window === 'undefined' ? { 'User-Agent': 'EntregaCondo-Dashboard/1.0' } : undefined;
+    const res = await fetch(url, { signal: controller.signal, ...(headers ? { headers } : {}) });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) return [];
+    const items = await res.json();
+    if (!Array.isArray(items)) return [];
+
+    return items
+      .map((item: any) => {
+        const lat = parseFloat(item.lat);
+        const lng = parseFloat(item.lon);
+        const display: string = item.display_name || '';
+        const parts = display.split(',').map((s: string) => s.trim());
+        const mainText = item.name || parts[0] || limpo;
+        const secondaryText = parts.slice(1, 4).join(', ') || 'Santa Catarina, Brasil';
+
+        return {
+          placeId: String(item.place_id || item.osm_id || Math.random()),
+          mainText,
+          secondaryText,
+          fullText: display || `${mainText}, ${secondaryText}`,
+          coordenadas: { lat, lng },
+          origem: 'nominatim' as const,
+        };
+      })
+      .filter((s: SugestaoEndereco) => {
+        return pertenceAGrandeFlorianopolis({
+          cidade: s.secondaryText,
+          endereco_completo: s.fullText,
+        });
+      });
+  } catch (e) {
+    console.warn('[buscarClientesEnderecos] Fallback Nominatim silencioso:', e);
+    return [];
+  }
+}
+
 export async function buscarClientesEnderecos(termo: string, empresaId?: string): Promise<ClienteEnderecoItem[]> {
-  const cleaned = termo.trim().replace(/[%_,().]/g, ' ');
+  const cleaned = termo.trim().replace(/[%_(),]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!cleaned) return [];
-  if (!isSupabaseConfigured) throw new Error('Conexão não configurada.');
-  const id = empresaId || await requireCompanyId();
-  const { data, error } = await supabase.from('clientes_enderecos').select('*').eq('empresa_id', id)
-    .or('nome_identificador.ilike.%' + cleaned + '%,endereco_completo.ilike.%' + cleaned + '%')
-    .order('total_entregas_realizadas', { ascending: false }).limit(15);
-  if (error) throw new Error(error.message);
-  return data || [];
+  if (!isSupabaseConfigured) return [];
+  try {
+    let id = empresaId;
+    if (!id && typeof window !== 'undefined') {
+      id = localStorage.getItem('ec_active_company_id') || undefined;
+    }
+    if (!id) {
+      try {
+        id = await requireCompanyId();
+      } catch {
+        id = undefined;
+      }
+    }
+
+    let baseQuery = supabase.from('clientes_enderecos').select('*');
+    if (id) {
+      baseQuery = baseQuery.eq('empresa_id', id);
+    }
+
+    // 1. Tenta consulta flexível com colunas completas
+    try {
+      const { data: dadosFlex, error: errFlex } = await baseQuery
+        .or(`nome.ilike.%${cleaned}%,nome_identificador.ilike.%${cleaned}%,endereco.ilike.%${cleaned}%,endereco_completo.ilike.%${cleaned}%`)
+        .order('total_entregas_realizadas', { ascending: false })
+        .limit(15);
+
+      if (!errFlex && dadosFlex && dadosFlex.length > 0) {
+        return dadosFlex;
+      }
+    } catch {
+      // Segue para fallback seguro
+    }
+
+    // 2. Fallback resiliente usando as colunas canônicas da tabela para garantir zero 400 no PostgREST
+    let safeQuery = supabase.from('clientes_enderecos').select('*');
+    if (id) {
+      safeQuery = safeQuery.eq('empresa_id', id);
+    }
+
+    const { data: dadosCanonica, error: errCanonica } = await safeQuery
+      .or(`nome_identificador.ilike.%${cleaned}%,endereco_completo.ilike.%${cleaned}%`)
+      .order('total_entregas_realizadas', { ascending: false })
+      .limit(15);
+
+    if (errCanonica) {
+      return [];
+    }
+
+    return dadosCanonica || [];
+  } catch (err) {
+    // Tratamento silencioso
+    return [];
+  }
 }

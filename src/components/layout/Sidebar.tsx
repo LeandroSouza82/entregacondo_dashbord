@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   LayoutDashboard, 
   Route, 
@@ -8,13 +8,52 @@ import {
   History, 
   Settings, 
   ChevronRight, 
-  ShieldCheck, 
   Sparkles,
   Database as DatabaseIcon,
-  UserCheck
+  UserCheck,
+  LogOut
 } from 'lucide-react';
-import { isSupabaseConfigured } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
 import { BrandLogo } from '../common/BrandLogo';
+
+interface UserProfile {
+  nome: string;
+  email: string;
+  iniciais: string;
+}
+
+function extrairPerfil(user: any): UserProfile {
+  if (!user) {
+    return {
+      nome: 'Gestor',
+      email: '',
+      iniciais: 'GL',
+    };
+  }
+
+  const meta = user.user_metadata || {};
+  const nomeCompleto =
+    meta.name ||
+    meta.full_name ||
+    user.email?.split('@')[0] ||
+    'Gestor';
+
+  let iniciais = 'GL';
+  const partes = nomeCompleto.trim().split(/\s+/);
+  if (partes.length >= 2) {
+    iniciais = `${partes[0][0]}${partes[partes.length - 1][0]}`.toUpperCase();
+  } else if (nomeCompleto.length >= 2) {
+    iniciais = nomeCompleto.substring(0, 2).toUpperCase();
+  } else if (nomeCompleto.length === 1) {
+    iniciais = nomeCompleto.toUpperCase();
+  }
+
+  return {
+    nome: nomeCompleto,
+    email: user.email || '',
+    iniciais,
+  };
+}
 
 export type ActiveTab = 'overview' | 'new_route' | 'routing' | 'deliveries' | 'drivers' | 'approvals' | 'condos' | 'history' | 'settings';
 
@@ -24,6 +63,41 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
+  const [perfil, setPerfil] = useState<UserProfile>({
+    nome: 'Gestor',
+    email: '',
+    iniciais: 'GL',
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (active && data?.user) {
+        setPerfil(extrairPerfil(data.user));
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) {
+        setPerfil(extrairPerfil(session?.user ?? null));
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function handleLogout() {
+    localStorage.removeItem('ec_active_company_id');
+    await supabase.auth.signOut();
+    window.location.reload();
+  }
+
   const menuItems = [
     {
       id: 'overview' as ActiveTab,
@@ -181,20 +255,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
         </p>
       </div>
 
-      {/* User Footer */}
-      <div className="p-4 border-t border-navy-700/60 bg-navy-850/80 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-[#2A4468] border border-navy-600 flex items-center justify-center font-bold text-xs text-white">
-            MA
+      {/* User Footer Dinâmico com Perfil Real e Logout */}
+      <div className="p-3.5 border-t border-navy-700/60 bg-navy-850/90 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-terracotta-600 to-terracotta-500 border border-terracotta-400/40 flex items-center justify-center font-bold text-xs text-white shadow-sm shrink-0">
+            {perfil.iniciais}
           </div>
-          <div className="flex flex-col">
-            <span className="text-xs font-semibold text-white">Mariana Alves</span>
-            <span className="text-[10px] text-slate-400">Gestora de entregas</span>
+          <div className="flex flex-col min-w-0">
+            <span className="text-xs font-semibold text-white truncate" title={perfil.nome}>
+              {perfil.nome}
+            </span>
+            <span className="text-[10px] text-slate-400 font-medium">Gestor de Logística</span>
           </div>
         </div>
-        <div className="p-1 rounded-lg bg-emerald-500/10 text-emerald-400" title="Sistema Online">
-          <ShieldCheck className="w-4 h-4" />
-        </div>
+
+        <button
+          onClick={handleLogout}
+          className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
+          title="Sair da conta"
+          type="button"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
     </aside>
   );

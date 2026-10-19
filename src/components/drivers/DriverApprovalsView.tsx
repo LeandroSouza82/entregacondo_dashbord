@@ -39,8 +39,6 @@ export const DriverApprovalsView: React.FC = () => {
     erro,
     alertaSucesso,
     setAlertaSucesso,
-    modoDemo,
-    alternarModoDemo,
     filtroStatus,
     setFiltroStatus,
     buscaTexto,
@@ -70,14 +68,13 @@ export const DriverApprovalsView: React.FC = () => {
   const [exibirPainelStorage, setExibirPainelStorage] = useState(false);
 
   const carregarStats = useCallback(async () => {
-    if (modoDemo) return;
     try {
       const stats = await consultarEstatisticasFilaLimpeza();
       setStatsFila(stats);
     } catch {
       // Falha silenciosa no polling de estatísticas
     }
-  }, [modoDemo]);
+  }, []);
 
   useEffect(() => {
     carregarStats();
@@ -310,25 +307,7 @@ export const DriverApprovalsView: React.FC = () => {
         </div>
       )}
 
-      {/* Indicador de Estado da Integração e Alternador de Demonstração */}
-      <IndicadorEstadoIntegracao modoDemo={modoDemo} onAlternarModoDemo={alternarModoDemo} />
-
-      {/* Alerta de Modo Demonstração Ativo */}
-      {modoDemo && (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between text-xs text-amber-900">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-            <strong>Modo Demonstração Ativo:</strong> Exibindo dados simulados claramente identificados como fictícios. Nenhuma mutação real será enviada ao banco de dados.
-          </div>
-          <button
-            type="button"
-            onClick={() => alternarModoDemo(false)}
-            className="text-xs font-bold text-amber-900 underline hover:text-amber-950 cursor-pointer"
-          >
-            Voltar para o Modo Real
-          </button>
-        </div>
-      )}
+      <IndicadorEstadoIntegracao modoDemo={false} onAlternarModoDemo={() => undefined} />
 
       {/* Alertas de Feedback */}
       {alertaSucesso && (

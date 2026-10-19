@@ -13,7 +13,6 @@ export function useAccessApprovals() {
   const [erro, setErro] = useState<string | null>(null);
   const [alertaSucesso, setAlertaSucesso] = useState<string | null>(null);
 
-  // Modo Demonstração explícito (desativado por padrão no modo real)
   const modoDemo = false;
   const alternarModoDemo = (_ativar: boolean) => {};
 
