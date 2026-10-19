@@ -26,7 +26,7 @@ BEGIN
 
     SELECT * INTO v_rota
     FROM public.rotas_planejadas
-    WHERE id = p_rota_id;
+    WHERE id = p_rota_id FOR UPDATE;
 
     IF NOT FOUND THEN
         RETURN jsonb_build_object(
@@ -37,10 +37,13 @@ BEGIN
     END IF;
 
     -- Descobre o motorista_id do usuário atual
-    v_motorista_id := public.fn_motorista_id_do_usuario(v_user_id);
+    SELECT m.id INTO v_motorista_id
+    FROM public.motoristas m
+    WHERE m.id = v_rota.motorista_id
+      AND m.empresa_id = v_rota.empresa_id AND m.user_id = v_user_id;
 
     -- Validação de titularidade: deve ser o motorista atribuído ou gestor da empresa
-    IF v_motorista_id != v_rota.motorista_id AND NOT public.fn_usuario_e_gestor_empresa(v_rota.empresa_id) THEN
+    IF public.fn_usuario_pode_operar_motorista(v_rota.empresa_id, v_rota.motorista_id) IS NOT TRUE THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ACESSO_NEGADO',

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   LayoutDashboard, 
   Route, 
@@ -8,12 +8,52 @@ import {
   History, 
   Settings, 
   ChevronRight, 
-  ShieldCheck, 
   Sparkles,
   Database as DatabaseIcon,
-  UserCheck
+  UserCheck,
+  LogOut
 } from 'lucide-react';
-import { isSupabaseConfigured } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { BrandLogo } from '../common/BrandLogo';
+
+interface UserProfile {
+  nome: string;
+  email: string;
+  iniciais: string;
+}
+
+function extrairPerfil(user: any): UserProfile {
+  if (!user) {
+    return {
+      nome: 'Gestor',
+      email: '',
+      iniciais: 'GL',
+    };
+  }
+
+  const meta = user.user_metadata || {};
+  const nomeCompleto =
+    meta.name ||
+    meta.full_name ||
+    user.email?.split('@')[0] ||
+    'Gestor';
+
+  let iniciais = 'GL';
+  const partes = nomeCompleto.trim().split(/\s+/);
+  if (partes.length >= 2) {
+    iniciais = `${partes[0][0]}${partes[partes.length - 1][0]}`.toUpperCase();
+  } else if (nomeCompleto.length >= 2) {
+    iniciais = nomeCompleto.substring(0, 2).toUpperCase();
+  } else if (nomeCompleto.length === 1) {
+    iniciais = nomeCompleto.toUpperCase();
+  }
+
+  return {
+    nome: nomeCompleto,
+    email: user.email || '',
+    iniciais,
+  };
+}
 
 export type ActiveTab = 'overview' | 'new_route' | 'routing' | 'deliveries' | 'drivers' | 'approvals' | 'condos' | 'history' | 'settings';
 
@@ -23,6 +63,41 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
+  const [perfil, setPerfil] = useState<UserProfile>({
+    nome: 'Gestor',
+    email: '',
+    iniciais: 'GL',
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (active && data?.user) {
+        setPerfil(extrairPerfil(data.user));
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) {
+        setPerfil(extrairPerfil(session?.user ?? null));
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function handleLogout() {
+    localStorage.removeItem('ec_active_company_id');
+    await supabase.auth.signOut();
+    window.location.reload();
+  }
+
   const menuItems = [
     {
       id: 'overview' as ActiveTab,
@@ -34,40 +109,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
       id: 'new_route' as ActiveTab,
       label: 'Nova rota de entregas',
       icon: Route,
-      badge: 'Design Exato',
+      badge: null,
       highlight: true,
     },
     {
       id: 'routing' as ActiveTab,
       label: 'Comparador de Rotas',
       icon: Route,
-      badge: 'IA Logística',
+      badge: null,
       highlight: false,
     },
     {
       id: 'deliveries' as ActiveTab,
       label: 'Gestão de entregas',
       icon: PackageCheck,
-      badge: '20 na fila',
+      badge: null,
     },
     {
       id: 'approvals' as ActiveTab,
       label: 'Aprovações de Acesso',
       icon: UserCheck,
-      badge: 'App Flutter',
+      badge: null,
       highlight: true,
     },
     {
       id: 'drivers' as ActiveTab,
       label: 'Motoristas',
       icon: Truck,
-      badge: '3 ativos',
+      badge: null,
     },
     {
       id: 'condos' as ActiveTab,
       label: 'Endereços salvos',
       icon: Building2,
-      badge: '128 salvos',
+      badge: null,
     },
     {
       id: 'history' as ActiveTab,
@@ -81,20 +156,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
     <aside className="w-64 bg-navy-800 text-slate-200 flex flex-col flex-shrink-0 border-r border-navy-700/70 select-none h-screen sticky top-0 z-30 transition-all">
       {/* Brand Header */}
       <div className="h-20 flex items-center px-6 border-b border-navy-700/60 bg-navy-850/60 backdrop-blur">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-terracotta-500 to-terracotta-700 flex items-center justify-center shadow-lg shadow-terracotta-600/30 text-white font-bold ring-2 ring-terracotta-500/20">
-            <Truck className="w-5 h-5 text-white" />
-          </div>
-          <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-lg text-white tracking-tight">Entrega</span>
-              <span className="font-extrabold text-lg text-terracotta-500 tracking-tight">Condo</span>
-            </div>
-            <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">
-              Gestão Logística Pro
-            </span>
-          </div>
-        </div>
+        <BrandLogo size="md" theme="dark" subtitle="Gestão Logística Pro" />
       </div>
 
       {/* Main Navigation */}
@@ -188,25 +250,33 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
         </div>
         <p className="text-[11px] text-slate-400 leading-tight">
           {isSupabaseConfigured
-            ? 'Conectado à nuvem Supabase em tempo real'
-            : 'Ambiente Mock Ativo (Pronto para sincronizar Supabase)'}
+            ? 'Conexão Supabase configurada'
+            : 'Conexão não configurada'}
         </p>
       </div>
 
-      {/* User Footer */}
-      <div className="p-4 border-t border-navy-700/60 bg-navy-850/80 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-[#2A4468] border border-navy-600 flex items-center justify-center font-bold text-xs text-white">
-            MA
+      {/* User Footer Dinâmico com Perfil Real e Logout */}
+      <div className="p-3.5 border-t border-navy-700/60 bg-navy-850/90 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-terracotta-600 to-terracotta-500 border border-terracotta-400/40 flex items-center justify-center font-bold text-xs text-white shadow-sm shrink-0">
+            {perfil.iniciais}
           </div>
-          <div className="flex flex-col">
-            <span className="text-xs font-semibold text-white">Mariana Alves</span>
-            <span className="text-[10px] text-slate-400">Gestora de entregas</span>
+          <div className="flex flex-col min-w-0">
+            <span className="text-xs font-semibold text-white truncate" title={perfil.nome}>
+              {perfil.nome}
+            </span>
+            <span className="text-[10px] text-slate-400 font-medium">Gestor de Logística</span>
           </div>
         </div>
-        <div className="p-1 rounded-lg bg-emerald-500/10 text-emerald-400" title="Sistema Online">
-          <ShieldCheck className="w-4 h-4" />
-        </div>
+
+        <button
+          onClick={handleLogout}
+          className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
+          title="Sair da conta"
+          type="button"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
     </aside>
   );

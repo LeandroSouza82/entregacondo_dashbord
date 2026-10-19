@@ -38,7 +38,7 @@ BEGIN
     -- 2. Busca veículo declarado
     SELECT * INTO v_veiculo
     FROM public.veiculos_motoristas
-    WHERE user_id = v_user_id;
+    WHERE user_id = v_user_id AND empresa_id = v_membro.empresa_id;
 
     -- Caso A: Membro encontrado
     IF v_membro.id IS NOT NULL THEN
@@ -119,7 +119,9 @@ BEGIN
                     'veiculo', v_motorista.veiculo_modelo || ' (' || v_motorista.veiculo_placa || ')',
                     'veiculo_status', v_veiculo.status_analise,
                     'veiculo_tipo', v_veiculo.tipo_veiculo,
-                    'mensagem', 'Acesso operacional liberado com sucesso.'
+                    'operacional_liberado', public.fn_usuario_pode_operar_motorista(v_membro.empresa_id, v_membro.motorista_id),
+                    'mensagem', CASE WHEN public.fn_usuario_pode_operar_motorista(v_membro.empresa_id, v_membro.motorista_id)
+                        THEN 'Acesso operacional liberado com sucesso.' ELSE 'Vínculo aprovado. Aguarde a aprovação do veículo para operar.' END
                 );
             ELSE
                 RETURN jsonb_build_object(
@@ -147,6 +149,7 @@ BEGIN
     LIMIT 1;
 
     IF v_solicitacao.id IS NOT NULL THEN
+        SELECT * INTO v_veiculo FROM public.veiculos_motoristas WHERE user_id=v_user_id AND empresa_id=v_solicitacao.empresa_id;
         RETURN jsonb_build_object(
             'autenticado', TRUE,
             'user_id', v_user_id,

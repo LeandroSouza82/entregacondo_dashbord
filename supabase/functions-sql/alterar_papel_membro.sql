@@ -40,7 +40,7 @@ BEGIN
     END IF;
 
     -- REGRA DE SEGURANÇA: Apenas administradores da empresa podem alterar papéis
-    IF NOT public.fn_usuario_e_admin_empresa(v_membro.empresa_id) THEN
+    IF NOT public.fn_usuario_e_admin_empresa(v_membro.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ACESSO_NEGADO',

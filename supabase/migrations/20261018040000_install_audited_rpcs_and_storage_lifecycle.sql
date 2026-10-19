@@ -190,7 +190,7 @@ USING (
     (
         public.fn_safe_uuid(split_part(name, '/', 2)) = auth.uid()
         OR
-        public.fn_usuario_e_gestor_empresa(public.fn_safe_uuid(split_part(name, '/', 1)))
+        public.fn_usuario_e_gestor_empresa(public.fn_safe_uuid(split_part(name, '/', 1)), auth.uid())
     )
 );
 
@@ -235,7 +235,7 @@ USING (
             (public.fn_validar_autorizacao_condutor(public.fn_safe_uuid(split_part(name, '/', 1)), auth.uid())->>'autorizado')::boolean = TRUE
         )
         OR
-        public.fn_usuario_e_gestor_empresa(public.fn_safe_uuid(split_part(name, '/', 1)))
+        public.fn_usuario_e_gestor_empresa(public.fn_safe_uuid(split_part(name, '/', 1)), auth.uid())
     ) AND
     NOT EXISTS (
         SELECT 1
@@ -658,7 +658,7 @@ BEGIN
                 'mensagem', public.fn_validar_autorizacao_condutor(v_doc.empresa_id, v_user_id)->>'mensagem'
             );
         END IF;
-    ELSIF public.fn_usuario_e_gestor_empresa(v_doc.empresa_id) THEN
+    ELSIF public.fn_usuario_e_gestor_empresa(v_doc.empresa_id, auth.uid()) THEN
         v_eh_gestor := TRUE;
     ELSE
         RETURN jsonb_build_object('sucesso', FALSE, 'codigo', 'ACESSO_NEGADO', 'mensagem', 'Você não tem permissão para remover este documento.');
@@ -726,7 +726,7 @@ BEGIN
         );
     END IF;
 
-    IF NOT public.fn_usuario_e_gestor_empresa(v_veiculo.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_veiculo.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object('sucesso', FALSE, 'codigo', 'ACESSO_NEGADO', 'mensagem', 'Apenas gestores desta empresa podem analisar veículos.');
     END IF;
 
@@ -809,7 +809,7 @@ BEGIN
     END IF;
 
     -- Valida autorização de gestão PRIMEIRO
-    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object('sucesso', FALSE, 'codigo', 'ACESSO_NEGADO', 'mensagem', 'Apenas gestores podem aprovar solicitações.');
     END IF;
 

@@ -44,7 +44,7 @@ AS $$
     );
 $$;
 
-CREATE OR REPLACE FUNCTION public.fn_motorista_id_do_usuario(p_user_id UUID)
+CREATE OR REPLACE FUNCTION public.fn_motorista_id_do_usuario(p_user_id UUID DEFAULT auth.uid())
 RETURNS UUID
 LANGUAGE sql
 SECURITY DEFINER
@@ -120,7 +120,7 @@ ON public.empresa_membros FOR SELECT
 TO authenticated
 USING (
     user_id = auth.uid() OR
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
 );
 
 -- solicitacoes_acesso
@@ -130,7 +130,7 @@ ON public.solicitacoes_acesso FOR SELECT
 TO authenticated
 USING (
     user_id = auth.uid() OR
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
 );
 
 -- auditoria_acessos
@@ -139,7 +139,7 @@ CREATE POLICY "Gestores leem auditoria da empresa"
 ON public.auditoria_acessos FOR SELECT
 TO authenticated
 USING (
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
 );
 
 -- motoristas
@@ -148,7 +148,7 @@ CREATE POLICY "Leitura de motoristas autorizada"
 ON public.motoristas FOR SELECT
 TO authenticated
 USING (
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
     OR
     (
         user_id = auth.uid() AND
@@ -171,7 +171,7 @@ ON public.veiculos_motoristas FOR SELECT
 TO authenticated
 USING (
     user_id = auth.uid() OR
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
 );
 
 -- veiculos_documentos
@@ -181,7 +181,7 @@ ON public.veiculos_documentos FOR SELECT
 TO authenticated
 USING (
     user_id = auth.uid() OR
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
 );
 
 -- clientes_enderecos
@@ -190,7 +190,7 @@ CREATE POLICY "Leitura de clientes enderecos por gestao ou motorista atribuido"
 ON public.clientes_enderecos FOR SELECT
 TO authenticated
 USING (
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
     OR
     EXISTS (
         SELECT 1 FROM public.entregas ent
@@ -206,7 +206,7 @@ CREATE POLICY "Leitura de rotas por gestao ou motorista atribuido"
 ON public.rotas_planejadas FOR SELECT
 TO authenticated
 USING (
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
     OR
     (
         motorista_id = public.fn_motorista_id_do_usuario(auth.uid())
@@ -227,7 +227,7 @@ CREATE POLICY "Leitura de entregas por gestao ou motorista atribuido"
 ON public.entregas FOR SELECT
 TO authenticated
 USING (
-    public.fn_usuario_e_gestor_empresa(empresa_id)
+    public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid())
     OR
     (
         motorista_id = public.fn_motorista_id_do_usuario(auth.uid())
@@ -253,6 +253,6 @@ USING (
     EXISTS (
         SELECT 1 FROM public.entregas e
         WHERE e.id = historico_atendimentos.entrega_id
-          AND public.fn_usuario_e_gestor_empresa(e.empresa_id)
+          AND public.fn_usuario_e_gestor_empresa(e.empresa_id, auth.uid())
     )
 );

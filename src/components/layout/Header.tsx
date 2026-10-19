@@ -1,11 +1,8 @@
 import React from 'react';
 import { 
   Search, 
-  Bell, 
-  Plus, 
+Plus, 
   Sparkles,
-  Truck,
-  CheckCircle2,
   Clock
 } from 'lucide-react';
 
@@ -19,8 +16,8 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   onOpenNewDelivery,
   onOpenOptimizer,
-  driversActiveCount = 3,
-  driversInRouteCount = 2,
+
+
 }) => {
   const currentDate = new Date().toLocaleDateString('pt-BR', {
     weekday: 'long',
@@ -45,19 +42,6 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Right: Actions, Driver Status, Notifications */}
       <div className="flex items-center gap-4">
         {/* Fleet mini summary badge */}
-        <div className="hidden lg:flex items-center gap-3 px-3.5 py-1.5 rounded-xl bg-slate-100/90 border border-slate-200 text-xs text-slate-600">
-          <div className="flex items-center gap-1.5 font-medium">
-            <Truck className="w-4 h-4 text-navy-800" />
-            <span>Frota:</span>
-            <span className="font-bold text-navy-800">{driversActiveCount} ativos</span>
-          </div>
-          <span className="h-3 w-[1px] bg-slate-300" />
-          <div className="flex items-center gap-1 text-emerald-700 font-medium">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>{driversInRouteCount} em rota</span>
-          </div>
-        </div>
-
         {/* Date display */}
         <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 font-medium capitalize">
           <Clock className="w-3.5 h-3.5 text-slate-400" />
@@ -84,14 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
           <span>Nova Entrega</span>
         </button>
 
-        {/* Notifications */}
-        <button 
-          className="relative p-2.5 rounded-xl text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors border border-slate-200/70"
-          aria-label="Notificações"
-        >
-          <Bell className="w-4 h-4" />
-          <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-terracotta-600 ring-2 ring-white" />
-        </button>
+
       </div>
     </header>
   );

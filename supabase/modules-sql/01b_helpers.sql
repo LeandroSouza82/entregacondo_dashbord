@@ -53,8 +53,9 @@ SET search_path = public
 AS $$
     SELECT EXISTS (
         SELECT 1
-        FROM public.empresa_membros
-        WHERE empresa_id = p_empresa_id
+        FROM public.empresa_membros em
+        JOIN public.empresas e ON e.id = em.empresa_id AND e.ativa = TRUE
+        WHERE em.empresa_id = p_empresa_id
           AND user_id = p_user_id
           AND papel IN ('admin', 'gestor')
           AND status = 'aprovado'
@@ -74,8 +75,9 @@ SET search_path = public
 AS $$
     SELECT EXISTS (
         SELECT 1
-        FROM public.empresa_membros
-        WHERE empresa_id = p_empresa_id
+        FROM public.empresa_membros em
+        JOIN public.empresas e ON e.id = em.empresa_id AND e.ativa = TRUE
+        WHERE em.empresa_id = p_empresa_id
           AND user_id = p_user_id
           AND papel = 'admin'
           AND status = 'aprovado'
@@ -95,8 +97,9 @@ SET search_path = public
 AS $$
     SELECT EXISTS (
         SELECT 1
-        FROM public.empresa_membros
-        WHERE empresa_id = p_empresa_id
+        FROM public.empresa_membros em
+        JOIN public.empresas e ON e.id = em.empresa_id AND e.ativa = TRUE
+        WHERE em.empresa_id = p_empresa_id
           AND user_id = p_user_id
           AND papel = 'motorista'
           AND status = 'aprovado'
@@ -152,6 +155,10 @@ BEGIN
         );
     END IF;
 
+    IF NOT EXISTS (SELECT 1 FROM public.empresas WHERE id = p_empresa_id AND ativa = TRUE) THEN
+        RETURN jsonb_build_object('autorizado', false, 'codigo', 'EMPRESA_INATIVA', 'mensagem', 'Empresa indisponível.');
+    END IF;
+
     -- 1. Verifica status em empresa_membros
     SELECT * INTO v_membro
     FROM public.empresa_membros
@@ -175,11 +182,10 @@ BEGIN
             );
         END IF;
 
-        RETURN jsonb_build_object(
-            'autorizado', FALSE,
-            'codigo', 'ACESSO_NAO_AUTORIZADO',
-            'mensagem', 'Vínculo com a empresa não está ativo.'
-        );
+        IF v_membro.status <> 'pendente' THEN
+            RETURN jsonb_build_object('autorizado', false, 'codigo', 'ACESSO_NAO_AUTORIZADO', 'mensagem', 'Vínculo com a empresa não está ativo.');
+        END IF;
+        -- Pendente só pode preparar cadastro se a solicitação atual também estiver pendente.
     END IF;
 
     -- 2. Se não é membro, verifica se possui solicitação de acesso ativa para cadastro inicial

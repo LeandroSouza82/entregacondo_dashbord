@@ -55,7 +55,7 @@ BEGIN
     END IF;
 
     -- 3. Valida permissão de gestão na empresa do veículo
-    IF NOT public.fn_usuario_e_gestor_empresa(v_veiculo.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_veiculo.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ACESSO_NEGADO',

@@ -16,33 +16,11 @@ CREATE TABLE IF NOT EXISTS public._quarentena_registros_orfaos (
 
 DO $$
 BEGIN
-    -- Isola e remove registros órfãos sem empresa se houver
-    IF EXISTS (SELECT 1 FROM public.motoristas WHERE empresa_id IS NULL) THEN
-        INSERT INTO public._quarentena_registros_orfaos (tabela_origem, registro_id, dados, motivo)
-        SELECT 'motoristas', id, to_jsonb(m), 'empresa_id_nulo_legado'
-        FROM public.motoristas m WHERE empresa_id IS NULL;
-        DELETE FROM public.motoristas WHERE empresa_id IS NULL;
-    END IF;
-
-    IF EXISTS (SELECT 1 FROM public.clientes_enderecos WHERE empresa_id IS NULL) THEN
-        INSERT INTO public._quarentena_registros_orfaos (tabela_origem, registro_id, dados, motivo)
-        SELECT 'clientes_enderecos', id, to_jsonb(c), 'empresa_id_nulo_legado'
-        FROM public.clientes_enderecos c WHERE empresa_id IS NULL;
-        DELETE FROM public.clientes_enderecos WHERE empresa_id IS NULL;
-    END IF;
-
-    IF EXISTS (SELECT 1 FROM public.entregas WHERE empresa_id IS NULL) THEN
-        INSERT INTO public._quarentena_registros_orfaos (tabela_origem, registro_id, dados, motivo)
-        SELECT 'entregas', id, to_jsonb(e), 'empresa_id_nulo_legado'
-        FROM public.entregas e WHERE empresa_id IS NULL;
-        DELETE FROM public.entregas WHERE empresa_id IS NULL;
-    END IF;
-
-    IF EXISTS (SELECT 1 FROM public.rotas_planejadas WHERE empresa_id IS NULL) THEN
-        INSERT INTO public._quarentena_registros_orfaos (tabela_origem, registro_id, dados, motivo)
-        SELECT 'rotas_planejadas', id, to_jsonb(r), 'empresa_id_nulo_legado'
-        FROM public.rotas_planejadas r WHERE empresa_id IS NULL;
-        DELETE FROM public.rotas_planejadas WHERE empresa_id IS NULL;
+    IF EXISTS (SELECT 1 FROM public.motoristas WHERE empresa_id IS NULL)
+       OR EXISTS (SELECT 1 FROM public.clientes_enderecos WHERE empresa_id IS NULL)
+       OR EXISTS (SELECT 1 FROM public.entregas WHERE empresa_id IS NULL)
+       OR EXISTS (SELECT 1 FROM public.rotas_planejadas WHERE empresa_id IS NULL) THEN
+        RAISE EXCEPTION 'Há registros legados sem empresa. Reconciliação administrativa necessária; nenhum registro foi movido ou excluído.';
     END IF;
 END $$;
 
@@ -369,11 +347,11 @@ DROP POLICY IF EXISTS "Motoristas aprovados inserem historico de suas entregas" 
 -- Novas políticas restritas
 CREATE POLICY "Gestores visualizam solicitacoes de sua empresa" ON public.solicitacoes_acesso
 FOR SELECT TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Gestores visualizam membros da empresa" ON public.empresa_membros
 FOR SELECT TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Usuario visualiza seu veiculo" ON public.veiculos_motoristas
 FOR SELECT TO authenticated
@@ -381,27 +359,27 @@ USING (user_id = auth.uid());
 
 CREATE POLICY "Gestores visualizam veiculos de sua empresa" ON public.veiculos_motoristas
 FOR SELECT TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Gestores gerenciam motoristas da sua empresa" ON public.motoristas
 FOR ALL TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Gestores gerenciam clientes da empresa" ON public.clientes_enderecos
 FOR ALL TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Gestores gerenciam rotas da empresa" ON public.rotas_planejadas
 FOR ALL TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Gestores gerenciam entregas da empresa" ON public.entregas
 FOR ALL TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Gestores gerenciam historico" ON public.historico_atendimentos
 FOR SELECT TO authenticated
@@ -409,7 +387,7 @@ USING (
     EXISTS (
         SELECT 1 FROM public.entregas e
         WHERE e.id = public.historico_atendimentos.entrega_id
-          AND public.fn_usuario_e_gestor_empresa(e.empresa_id)
+          AND public.fn_usuario_e_gestor_empresa(e.empresa_id, auth.uid())
     )
 );
 

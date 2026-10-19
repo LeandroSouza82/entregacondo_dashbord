@@ -1,10 +1,31 @@
 import React, { useRef, useMemo, useEffect, useState, useCallback } from 'react';
-import Map, { Marker, Source, Layer, Popup, type MapRef } from 'react-map-gl/mapbox';
+import Map, { Marker, Source, Layer, Popup, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import type { Feature, LineString } from 'geojson';
-import { MapPin } from 'lucide-react';
+import { MapPin, Map as MapIcon, Globe, Moon } from 'lucide-react';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
+
+export const MAP_STYLES = [
+  {
+    id: 'streets',
+    label: 'Ruas / Logística',
+    icon: MapIcon,
+    styleUrl: 'mapbox://styles/mapbox/streets-v12',
+  },
+  {
+    id: 'satellite',
+    label: 'Satélite',
+    icon: Globe,
+    styleUrl: 'mapbox://styles/mapbox/satellite-streets-v12',
+  },
+  {
+    id: 'dark',
+    label: 'Dark / Noturno',
+    icon: Moon,
+    styleUrl: 'mapbox://styles/mapbox/navigation-night-v1',
+  },
+];
 
 interface RouteMapProps {
   pontoPartida: {
@@ -26,6 +47,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   otimizado = true,
 }) => {
   const mapRef = useRef<MapRef | null>(null);
+  const [estiloAtual, setEstiloAtual] = useState<string>('mapbox://styles/mapbox/streets-v12');
   const [popupInfo, setPopupInfo] = useState<{
     longitude: number;
     latitude: number;
@@ -46,7 +68,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   }, [pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat]);
 
   // GeoJSON LineString da rota para Source / Layer
-  const routeGeoJson = useMemo<Feature<LineString>>(() => {
+  const routeGeoJson = useMemo<Feature<LineString> | null>(() => {
     const coordinates: [number, number][] = [
       [pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat],
       ...paradas.map((p) => [p.coordenadas.lng, p.coordenadas.lat] as [number, number]),
@@ -54,6 +76,10 @@ export const RouteMap: React.FC<RouteMapProps> = ({
 
     if (pontoPreview) {
       coordinates.push([pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]);
+    }
+
+    if (coordinates.length < 2) {
+      return null;
     }
 
     return {
@@ -68,7 +94,21 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     };
   }, [pontoPartida, paradas, pontoPreview, otimizado]);
 
-  // Layer styling memoizado
+  // Layer styling memoizado com contorno de alto contraste
+  const routeCasingStyle = useMemo(() => ({
+    id: 'route-line-casing',
+    type: 'line' as const,
+    layout: {
+      'line-join': 'round' as const,
+      'line-cap': 'round' as const,
+    },
+    paint: {
+      'line-color': '#FFFFFF',
+      'line-width': 7.5,
+      'line-opacity': 0.95,
+    },
+  }), []);
+
   const routeLayerStyle = useMemo(() => ({
     id: 'route-line',
     type: 'line' as const,
@@ -77,9 +117,9 @@ export const RouteMap: React.FC<RouteMapProps> = ({
       'line-cap': 'round' as const,
     },
     paint: {
-      'line-color': otimizado ? '#1D4ED8' : '#94A3B8',
+      'line-color': otimizado ? '#1D4ED8' : '#475569',
       'line-width': 4.5,
-      'line-opacity': 0.9,
+      'line-opacity': 1,
       ...(otimizado ? {} : { 'line-dasharray': [2, 2] }),
     },
   }), [otimizado]);
@@ -127,6 +167,25 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     }, 200);
     return () => clearTimeout(timer);
   }, [paradas.length, fitRouteBounds]);
+
+  // Se o ponto de partida mudar (novas coordenadas selecionadas), reposiciona a câmera imediatamente no novo ponto
+  useEffect(() => {
+    if (mapRef.current && pontoPartida?.coordenadas) {
+      const { lng, lat } = pontoPartida.coordenadas;
+      if (typeof lng === 'number' && typeof lat === 'number' && !isNaN(lng) && !isNaN(lat)) {
+        if (paradas.length === 0) {
+          mapRef.current.flyTo({
+            center: [lng, lat],
+            zoom: 14.8,
+            duration: 800,
+            essential: true,
+          });
+        } else {
+          fitRouteBounds();
+        }
+      }
+    }
+  }, [pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat, paradas.length, fitRouteBounds]);
 
   // Se houver um novo ponto selecionado no Google Places, faz flyTo para centralizá-lo
   useEffect(() => {
@@ -181,20 +240,66 @@ export const RouteMap: React.FC<RouteMapProps> = ({
 
   return (
     <div className="relative w-full rounded-2xl overflow-hidden border border-[#E1E6ED] bg-white shadow-card">
-      <div className="w-full h-[260px] md:h-[280px]">
+      {/* Seletor Flutuante de Estilos de Camada */}
+      <div className="absolute top-3 left-3 z-10 flex items-center p-1 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl shadow-md gap-1">
+        {MAP_STYLES.map((st) => {
+          const Icon = st.icon;
+          const isActive = estiloAtual === st.styleUrl;
+          return (
+            <button
+              key={st.id}
+              data-testid={`map-style-${st.id}`}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEstiloAtual(st.styleUrl);
+              }}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                isActive
+                  ? 'bg-navy-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-navy-900 hover:bg-slate-100/80'
+              }`}
+              title={`Alternar visualização para ${st.label}`}
+            >
+              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-400' : 'text-slate-400'}`} />
+              <span>{st.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="w-full h-[280px] md:h-[300px]">
         <Map
           ref={mapRef}
           initialViewState={initialViewState}
           mapboxAccessToken={MAPBOX_TOKEN}
-          mapStyle="mapbox://styles/mapbox/light-v11"
+          mapStyle={estiloAtual}
           reuseMaps
           attributionControl={false}
+          onLoad={(evt) => {
+            if (pontoPartida?.coordenadas) {
+              const { lng, lat } = pontoPartida.coordenadas;
+              if (typeof lng === 'number' && typeof lat === 'number' && !isNaN(lng) && !isNaN(lat)) {
+                evt.target.flyTo({
+                  center: [lng, lat],
+                  zoom: 14.8,
+                  duration: 600,
+                  essential: true,
+                });
+              }
+            }
+          }}
           style={{ width: '100%', height: '100%' }}
         >
-          {/* Rota Polyline */}
-          <Source id="route-source" type="geojson" data={routeGeoJson}>
-            <Layer {...routeLayerStyle} />
-          </Source>
+          {/* Rota Polyline com Contorno de Alto Contraste - key={estiloAtual} para remontar ao trocar estilo */}
+          {routeGeoJson && (
+            <Source id="route-source" key={estiloAtual} type="geojson" data={routeGeoJson}>
+              <Layer {...routeCasingStyle} />
+              <Layer {...routeLayerStyle} />
+            </Source>
+          )}
+
+          <NavigationControl position="bottom-right" showCompass={false} />
 
           {/* Marcador Ponto de Partida */}
           <Marker
@@ -211,7 +316,10 @@ export const RouteMap: React.FC<RouteMapProps> = ({
               });
             }}
           >
-            <div className="bg-[#0F1B2D] text-white font-sans text-[10px] font-bold px-2 py-1 rounded-md shadow-md border-2 border-white cursor-pointer hover:scale-105 transition-transform">
+            <div
+              data-testid="marker-inicio"
+              className="bg-[#0F1B2D] text-white font-sans text-[10px] font-bold px-2 py-1 rounded-md shadow-md border-2 border-white cursor-pointer hover:scale-105 transition-transform"
+            >
               Início
             </div>
           </Marker>
@@ -277,7 +385,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           <span className="w-2.5 h-2.5 rounded-full bg-[#1D4ED8]"></span>
           <span className="font-medium">{paradas.length} paradas na rota</span>
         </span>
-        <span className="font-semibold text-emerald-700">Mapbox GL · Rota Otimizada</span>
+        <span className="font-semibold text-emerald-700">Logística Inteligente · Rota Otimizada</span>
       </div>
     </div>
   );

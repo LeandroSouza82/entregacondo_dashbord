@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UserCheck, X, PlusCircle, Link as LinkIcon, AlertCircle, FileText } from 'lucide-react';
+import { UserCheck, X, PlusCircle, Link as LinkIcon, AlertCircle, FileText, CheckSquare, Square } from 'lucide-react';
 import type { SolicitacaoAcessoItem, MotoristaFrotaItem } from '../types/accessApproval';
 import { CartaoVeiculoDeclarado } from '../../vehicles/components/CartaoVeiculoDeclarado';
 import type { DocumentoVeiculoItem } from '../../vehicle-documents/types/vehicleDocument';
@@ -14,6 +14,7 @@ interface ModalAprovarMotoristaProps {
     motoristaId?: string | null;
     nomeMotorista?: string;
     telefoneMotorista?: string;
+    aprovarVeiculo?: boolean;
     revisaoEsperadaVeiculo?: number | null;
   }) => Promise<void>;
   onFechar: () => void;
@@ -33,6 +34,10 @@ export const ModalAprovarMotorista: React.FC<ModalAprovarMotoristaProps> = ({
   const [motoristaSelecionadoId, setMotoristaSelecionadoId] = useState<string>('');
   const [nomeCustomizado, setNomeCustomizado] = useState(solicitacao.usuario_nome);
   const [telefoneCustomizado, setTelefoneCustomizado] = useState(solicitacao.usuario_telefone || '');
+  const [aprovarVeiculoJunto, setAprovarVeiculoJunto] = useState(false);
+
+  const temVeiculo = Boolean(solicitacao.veiculo_declarado?.id);
+  const revisaoVeiculo = solicitacao.veiculo_declarado?.revisao ?? null;
 
   const motoristasFiltrados = motoristasDisponiveis.filter(
     (m) => !m.user_id || m.user_id === solicitacao.user_id
@@ -51,7 +56,8 @@ export const ModalAprovarMotorista: React.FC<ModalAprovarMotoristaProps> = ({
       motoristaId: modoAprovacao === 'vincular_existente' ? motoristaSelecionadoId : null,
       nomeMotorista: nomeCustomizado,
       telefoneMotorista: telefoneCustomizado,
-      revisaoEsperadaVeiculo: solicitacao.veiculo_declarado?.revisao ?? null,
+      aprovarVeiculo: temVeiculo && aprovarVeiculoJunto,
+      revisaoEsperadaVeiculo: (temVeiculo && aprovarVeiculoJunto) ? revisaoVeiculo : null,
     });
   };
 
@@ -171,6 +177,32 @@ export const ModalAprovarMotorista: React.FC<ModalAprovarMotoristaProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Opção explícita de aprovação conjunta de veículo */}
+          {temVeiculo && (
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-start gap-2.5">
+              <button
+                type="button"
+                onClick={() => setAprovarVeiculoJunto(!aprovarVeiculoJunto)}
+                className="mt-0.5 text-emerald-600 focus:outline-none cursor-pointer"
+              >
+                {aprovarVeiculoJunto ? (
+                  <CheckSquare className="w-4 h-4 text-emerald-600" />
+                ) : (
+                  <Square className="w-4 h-4 text-slate-400" />
+                )}
+              </button>
+              <div className="text-xs">
+                <span className="font-bold text-[#0F1B2D] block">
+                  Aprovar também o veículo declarado nesta operação
+                </span>
+                <span className="text-[11px] text-slate-500 block mt-0.5">
+                  Exige conferência da revisão visualizada (#{revisaoVeiculo ?? 1}) e completude de todas as 4 fotos e CRLV.
+                  Se desmarcado, apenas o vínculo será aprovado e o veículo permanecerá pendente de análise técnica.
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Campos específicos da Opção A */}
           {modoAprovacao === 'criar_novo' && (

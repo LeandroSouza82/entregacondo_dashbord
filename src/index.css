@@ -46,3 +46,15 @@
 .pac-item:hover {
   background-color: #EEF4FF !important;
 }
+
+/* Ocultar marca d'água do Mapbox no canto inferior esquerdo */
+.mapboxgl-ctrl-bottom-left,
+.mapboxgl-ctrl-logo,
+a.mapboxgl-ctrl-logo,
+.mapboxgl-ctrl-attrib {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+

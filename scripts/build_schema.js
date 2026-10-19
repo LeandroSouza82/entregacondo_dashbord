@@ -17,8 +17,17 @@ const FILE_ORDER = [
   path.join(MODULES_DIR, '02_tables_vehicles.sql'),
   path.join(MODULES_DIR, '03_tables_logistics.sql'),
 
+  path.join(MODULES_DIR, '04_storage.sql'),
+  path.join(MODULES_DIR, '04a_storage_constraints.sql'),
+
   // 2. Funções de negócio (RPCs)
   path.join(FUNCTIONS_DIR, 'fn_validar_completude_veiculo.sql'),
+  path.join(FUNCTIONS_DIR, 'fn_usuario_pode_operar_motorista.sql'),
+  path.join(FUNCTIONS_DIR, 'reservar_upload_evidencia.sql'),
+  path.join(FUNCTIONS_DIR, 'descartar_evidencia_temporaria.sql'),
+  path.join(FUNCTIONS_DIR, 'reivindicar_itens_limpeza_storage.sql'),
+  path.join(FUNCTIONS_DIR, 'retomar_limpeza_falha.sql'),
+  path.join(FUNCTIONS_DIR, 'registrar_limpeza_storage_executada.sql'),
   path.join(FUNCTIONS_DIR, 'solicitar_acesso_empresa.sql'),
   path.join(FUNCTIONS_DIR, 'aprovar_solicitacao_motorista.sql'),
   path.join(FUNCTIONS_DIR, 'rejeitar_solicitacao_acesso.sql'),
@@ -35,10 +44,10 @@ const FILE_ORDER = [
   path.join(FUNCTIONS_DIR, 'registrar_conclusao_entrega.sql'),
   path.join(FUNCTIONS_DIR, 'obter_meu_status_acesso.sql'),
   path.join(FUNCTIONS_DIR, 'sincronizar_meu_perfil.sql'),
+  path.join(FUNCTIONS_DIR, 'salvar_cliente_endereco.sql'),
   path.join(FUNCTIONS_DIR, 'bootstrap_primeiro_gestor.sql'),
 
-  // 3. Storage, Segurança e Grants
-  path.join(MODULES_DIR, '04_storage.sql'),
+  // 3. Segurança e Grants
   path.join(MODULES_DIR, '05_rls_policies.sql'),
   path.join(MODULES_DIR, '06_grants.sql'),
 ];
@@ -90,24 +99,7 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 `;
 
-  // Bootstrap seed
-  output += `
--- ------------------------------------------------------------------------------
--- DADOS INICIAIS BASE (EMPRESA MATRIZ)
--- ------------------------------------------------------------------------------
-INSERT INTO public.empresas (id, nome, cnpj, codigo_convite, cidade, uf, ativa)
-VALUES (
-    '11111111-1111-1111-1111-111111111111',
-    'EntregaCondo Matriz (Florianópolis)',
-    '00.000.000/0001-00',
-    'EC-FLN-01',
-    'Florianópolis',
-    'SC',
-    TRUE
-)
-ON CONFLICT (codigo_convite) DO NOTHING;
-`;
-
+  // Sem dados de demonstração no esquema de produção.
   fs.writeFileSync(OUTPUT_FILE, output, 'utf8');
   console.log(`schema.sql gerado com sucesso em: ${OUTPUT_FILE} (${output.length} bytes)`);
 }

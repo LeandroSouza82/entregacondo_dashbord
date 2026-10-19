@@ -498,6 +498,48 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
+-- Dependências explícitas das políticas e RPCs desta migração.
+CREATE OR REPLACE FUNCTION public.fn_usuario_e_gestor_empresa(
+    p_empresa_id UUID,
+    p_user_id UUID DEFAULT auth.uid()
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.empresa_membros em
+        JOIN public.empresas e ON e.id = em.empresa_id AND e.ativa = TRUE
+        WHERE em.empresa_id = p_empresa_id
+          AND user_id = p_user_id
+          AND papel IN ('admin', 'gestor')
+          AND status = 'aprovado'
+    );
+$$;
+CREATE OR REPLACE FUNCTION public.fn_usuario_e_admin_empresa(
+    p_empresa_id UUID,
+    p_user_id UUID DEFAULT auth.uid()
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.empresa_membros em
+        JOIN public.empresas e ON e.id = em.empresa_id AND e.ativa = TRUE
+        WHERE em.empresa_id = p_empresa_id
+          AND user_id = p_user_id
+          AND papel = 'admin'
+          AND status = 'aprovado'
+    );
+$$;
+
 CREATE OR REPLACE FUNCTION public.fn_usuario_e_gestor_empresa(p_empresa_id UUID)
 RETURNS BOOLEAN AS $$
 BEGIN
@@ -686,7 +728,7 @@ BEGIN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'SOLICITACAO_NAO_ENCONTRADA', 'mensagem', 'Solicitação não encontrada.');
     END IF;
 
-    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'PERMISSAO_NEGADA', 'mensagem', 'Ação negada: você não é gestor autorizado desta empresa.');
     END IF;
 
@@ -784,7 +826,7 @@ BEGIN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'SOLICITACAO_NAO_ENCONTRADA', 'mensagem', 'Solicitação não encontrada.');
     END IF;
 
-    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_solicitacao.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'PERMISSAO_NEGADA', 'mensagem', 'Ação negada: você não é gestor autorizado desta empresa.');
     END IF;
 
@@ -844,7 +886,7 @@ BEGIN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'MEMBRO_NAO_ENCONTRADO', 'mensagem', 'Membro não encontrado.');
     END IF;
 
-    IF NOT public.fn_usuario_e_gestor_empresa(v_membro.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_membro.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'PERMISSAO_NEGADA', 'mensagem', 'Permissão negada.');
     END IF;
 
@@ -899,7 +941,7 @@ BEGIN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'MEMBRO_NAO_ENCONTRADO', 'mensagem', 'Membro não encontrado.');
     END IF;
 
-    IF NOT public.fn_usuario_e_gestor_empresa(v_membro.empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_membro.empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'PERMISSAO_NEGADA', 'mensagem', 'Permissão negada.');
     END IF;
 
@@ -1051,7 +1093,7 @@ BEGIN
         RAISE EXCEPTION 'Parâmetros obrigatórios ausentes: empresa_id e motorista_id.';
     END IF;
 
-    IF NOT public.fn_usuario_e_gestor_empresa(v_empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_empresa_id, auth.uid()) THEN
         RAISE EXCEPTION 'Ação negada: usuário não é gestor aprovado desta empresa.';
     END IF;
 
@@ -1496,8 +1538,8 @@ USING (user_id = auth.uid());
 
 CREATE POLICY "Gestores gerenciam solicitacoes de sua empresa" ON public.solicitacoes_acesso
 FOR ALL TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Usuario visualiza seu vinculo" ON public.empresa_membros
 FOR SELECT TO authenticated
@@ -1505,17 +1547,17 @@ USING (user_id = auth.uid());
 
 CREATE POLICY "Gestores gerenciam membros da empresa" ON public.empresa_membros
 FOR ALL TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Apenas gestores visualizam auditoria de sua empresa" ON public.auditoria_acessos
 FOR SELECT TO authenticated
-USING (public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Gestores gerenciam motoristas da sua empresa" ON public.motoristas
 FOR ALL TO authenticated
-USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Motorista aprovado consulta seu proprio cadastro" ON public.motoristas
 FOR SELECT TO authenticated
@@ -1531,8 +1573,8 @@ USING (
 
 CREATE POLICY "Gestores gerenciam clientes da empresa" ON public.clientes_enderecos
 FOR ALL TO authenticated
-USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Motoristas aprovados leem enderecos de entregas atribuidas" ON public.clientes_enderecos
 FOR SELECT TO authenticated
@@ -1547,8 +1589,8 @@ USING (
 
 CREATE POLICY "Gestores gerenciam rotas da empresa" ON public.rotas_planejadas
 FOR ALL TO authenticated
-USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Motorista aprovado consulta apenas suas rotas" ON public.rotas_planejadas
 FOR SELECT TO authenticated
@@ -1591,8 +1633,8 @@ WITH CHECK (
 
 CREATE POLICY "Gestores gerenciam entregas da empresa" ON public.entregas
 FOR ALL TO authenticated
-USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id))
-WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id));
+USING (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()))
+WITH CHECK (empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(empresa_id, auth.uid()));
 
 CREATE POLICY "Motorista aprovado consulta apenas suas entregas" ON public.entregas
 FOR SELECT TO authenticated
@@ -1639,7 +1681,7 @@ USING (
     EXISTS (
         SELECT 1 FROM public.entregas e
         WHERE e.id = public.historico_atendimentos.entrega_id
-          AND (e.empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(e.empresa_id))
+          AND (e.empresa_id IS NULL OR public.fn_usuario_e_gestor_empresa(e.empresa_id, auth.uid()))
     )
 );
 

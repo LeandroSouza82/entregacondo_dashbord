@@ -15,6 +15,7 @@ AS $$
 DECLARE
     v_user_id UUID := auth.uid();
     v_empresa_id UUID;
+    v_empresas UUID[];
     v_tipo_veiculo VARCHAR(20);
     v_marca VARCHAR(100);
     v_modelo VARCHAR(100);
@@ -37,27 +38,24 @@ BEGIN
         );
     END IF;
 
-    -- 1. Descobre a empresa do condutor via membro ou solicitação pendente
-    SELECT empresa_id INTO v_empresa_id
-    FROM public.empresa_membros
-    WHERE user_id = v_user_id
-    ORDER BY created_at DESC
-    LIMIT 1;
-
-    IF v_empresa_id IS NULL THEN
-        SELECT empresa_id INTO v_empresa_id
-        FROM public.solicitacoes_acesso
-        WHERE user_id = v_user_id AND status = 'pendente'
-        ORDER BY created_at DESC
-        LIMIT 1;
+    -- Empresa explícita quando há mais de um vínculo; nunca transferir veículo.
+    IF NULLIF(TRIM(p_dados->>'empresa_id'), '') IS NOT NULL THEN
+        v_empresa_id := public.fn_safe_uuid(p_dados->>'empresa_id');
+        IF v_empresa_id IS NULL THEN
+            RETURN jsonb_build_object('sucesso', false, 'codigo', 'EMPRESA_INVALIDA', 'mensagem', 'Empresa inválida.');
+        END IF;
+    ELSE
+        SELECT array_agg(DISTINCT candidato.empresa_id) INTO v_empresas FROM (
+            SELECT em.empresa_id FROM public.empresa_membros em WHERE em.user_id = v_user_id AND em.status IN ('pendente','aprovado')
+            UNION SELECT sa.empresa_id FROM public.solicitacoes_acesso sa WHERE sa.user_id = v_user_id AND sa.status = 'pendente'
+        ) candidato;
+        IF COALESCE(cardinality(v_empresas),0) > 1 THEN
+            RETURN jsonb_build_object('sucesso', false, 'codigo', 'EMPRESA_OBRIGATORIA', 'mensagem', 'Selecione a empresa deste cadastro.');
+        END IF;
+        v_empresa_id := v_empresas[1];
     END IF;
-
     IF v_empresa_id IS NULL THEN
-        RETURN jsonb_build_object(
-            'sucesso', FALSE,
-            'codigo', 'SEM_VINCULO_EMPRESA',
-            'mensagem', 'Solicite acesso a uma empresa antes de cadastrar o veículo.'
-        );
+        RETURN jsonb_build_object('sucesso', false, 'codigo', 'SEM_VINCULO_EMPRESA', 'mensagem', 'Solicite acesso a uma empresa antes de cadastrar o veículo.');
     END IF;
 
     -- Validação centralizada de autorização (bloqueia suspenso e sem vínculo ativo)
@@ -67,6 +65,14 @@ BEGIN
             'codigo', public.fn_validar_autorizacao_condutor(v_empresa_id, v_user_id)->>'codigo',
             'mensagem', public.fn_validar_autorizacao_condutor(v_empresa_id, v_user_id)->>'mensagem'
         );
+    END IF;
+
+
+    -- Serializa também o primeiro cadastro, antes de existir uma linha do veículo.
+    PERFORM pg_advisory_xact_lock(hashtextextended('veiculo:' || v_user_id::text, 0));
+    SELECT * INTO v_veiculo_existente FROM public.veiculos_motoristas WHERE user_id = v_user_id FOR UPDATE;
+    IF FOUND AND v_veiculo_existente.empresa_id IS DISTINCT FROM v_empresa_id THEN
+        RETURN jsonb_build_object('sucesso', false, 'codigo', 'VEICULO_OUTRA_EMPRESA', 'mensagem', 'O veículo pertence a outra empresa. A transferência exige um processo separado; dados e evidências foram preservados.');
     END IF;
 
     -- 2. Extrai e normaliza campos comuns
@@ -222,7 +228,6 @@ BEGIN
         timezone('utc'::text, now())
     )
     ON CONFLICT (user_id) DO UPDATE SET
-        empresa_id = v_empresa_id,
         tipo_veiculo = EXCLUDED.tipo_veiculo,
         marca = EXCLUDED.marca,
         modelo = EXCLUDED.modelo,
@@ -235,6 +240,7 @@ BEGIN
         motivo_rejeicao = NULL,
         revisao = public.veiculos_motoristas.revisao + 1,
         updated_at = timezone('utc'::text, now())
+    WHERE public.veiculos_motoristas.empresa_id = EXCLUDED.empresa_id
     RETURNING id, revisao INTO v_novo_id, v_revisao_nova;
 
     RETURN jsonb_build_object(

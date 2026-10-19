@@ -1,527 +1,229 @@
--- =============================================================================
--- SUITE DE TESTES AUTOMATIZADOS: SEGURANÇA, STORAGE, REVISÃO E TRANSAÇÕES
--- Projeto: EntregaCondo Backend (Supabase vblwuvhdqgzdjnoscyqo)
--- Data: 18/10/2026
---
--- AVISO IMPORTANTE SOBRE FIXTURES E AMBIENTE:
--- 1. Este script executa testes unitários e de integração SQL dentro de uma
---    transação isolada (com ROLLBACK final).
--- 2. As inserções em `storage.objects` são FIXTURES DE METADADOS SQL para teste
---    unitário do catálogo e das políticas RLS no Postgres. Elas simulam o registro
---    que o serviço Supabase Storage cria no banco, mas NÃO testam isoladamente a
---    persistência física de blocos em storage S3/MinIO sem a API do Storage ativa.
--- 3. A concorrência multi-sessão com interleaved timing requer duas conexões
---    independentes de cliente. Este script valida o protocolo atômico e a recusa
---    por revisão desatualizada (otimista) no nível de motor SQL.
--- =============================================================================
-
+-- Testes relacionais de metadados: não criam binários nem usam a API HTTP do Storage.
+-- Executar somente em Supabase local/staging isolado, ou via npm run test:db.
 BEGIN;
-
-DO $setup$
+CREATE TEMP TABLE regression_results(name text NOT NULL);
+CREATE FUNCTION pg_temp.check_result(ok boolean, message text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE NOTICE '=============================================================';
-    RAISE NOTICE 'INICIANDO SUITE DE TESTES: REVISÃO, STORAGE E RLS (v4.3)';
-    RAISE NOTICE '=============================================================';
-END $setup$;
-
--- Setup de Fixtures de Teste
-DO $fixtures$
+    IF ok IS NOT TRUE THEN RAISE EXCEPTION 'REGRESSÃO: %',message; END IF;
+    INSERT INTO regression_results VALUES(message);
+END $$;
+DO $tests$
 DECLARE
-    v_empresa_1 UUID := '11111111-1111-1111-1111-111111111111';
-    v_empresa_2 UUID := '22222222-2222-2222-2222-222222222222';
-    v_user_admin UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    v_user_gestor UUID := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-    v_user_motorista UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-    v_user_suspenso UUID := 'dddddddd-dddd-dddd-dddd-dddddddddddd';
-    v_user_estranho UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
-    v_user_novo UUID := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+    company_a uuid := '11111111-1111-1111-1111-111111111111';
+    company_b uuid := '22222222-2222-2222-2222-222222222222';
+    driver_a uuid := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+    admin_a uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    admin_b uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    outsider uuid := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    candidate uuid := '99999999-9999-9999-9999-999999999999';
+    car_id uuid; candidate_car uuid; doc_id uuid; front_id uuid;
+    fila_id uuid; request_id uuid; addr_id uuid; route_id uuid; delivery_id uuid;
+    reservation jsonb; result jsonb; claim record; claim2 record;
+    angle text; storage_path_value text; count_before bigint; count_after bigint; revision int;
+    expected_denial boolean; n int;
 BEGIN
-    -- Mock de metadados do schema storage para testes unitários no catálogo SQL
-    CREATE SCHEMA IF NOT EXISTS storage;
-    CREATE TABLE IF NOT EXISTS storage.objects (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        bucket_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        owner UUID,
-        created_at TIMESTAMPTZ DEFAULT now(),
-        updated_at TIMESTAMPTZ DEFAULT now(),
-        last_accessed_at TIMESTAMPTZ DEFAULT now(),
-        metadata JSONB DEFAULT '{}'::jsonb
-    );
-
-    -- Habilita RLS forçado em storage.objects para que as políticas sejam avaliadas no teste
-    ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE storage.objects FORCE ROW LEVEL SECURITY;
-
-    -- Se o schema auth existir (ambiente Supabase real), garante os usuários base
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users') THEN
-        INSERT INTO auth.users (id, email, raw_user_meta_data, role, aud)
-        VALUES 
-            (v_user_admin, 'admin@alpha.com', '{"nome":"Admin Master"}'::jsonb, 'authenticated', 'authenticated'),
-            (v_user_gestor, 'gestor@alpha.com', '{"nome":"Gestor Logistica"}'::jsonb, 'authenticated', 'authenticated'),
-            (v_user_motorista, 'motorista@alpha.com', '{"nome":"Motorista Teste"}'::jsonb, 'authenticated', 'authenticated'),
-            (v_user_suspenso, 'suspenso@alpha.com', '{"nome":"Motorista Suspenso"}'::jsonb, 'authenticated', 'authenticated'),
-            (v_user_estranho, 'estranho@beta.com', '{"nome":"Usuario Outra Empresa"}'::jsonb, 'authenticated', 'authenticated'),
-            (v_user_novo, 'novo@alpha.com', '{"nome":"Novo Candidato"}'::jsonb, 'authenticated', 'authenticated')
-        ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email;
-    END IF;
-
-    -- Limpa registros de teste prévios
-    DELETE FROM storage.objects WHERE bucket_id = 'veiculos-documentos';
-    DELETE FROM public.auditoria_acessos WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.historico_atendimentos WHERE motorista_id IN (SELECT id FROM public.motoristas WHERE empresa_id IN (v_empresa_1, v_empresa_2));
-    DELETE FROM public.entregas WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.rotas_planejadas WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.clientes_enderecos WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.veiculos_documentos WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.veiculos_motoristas WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.motoristas WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.solicitacoes_acesso WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.empresa_membros WHERE empresa_id IN (v_empresa_1, v_empresa_2);
-    DELETE FROM public.empresas WHERE id IN (v_empresa_1, v_empresa_2);
-
-    -- Insere Empresas de Teste
-    INSERT INTO public.empresas (id, nome, cnpj, codigo_convite, cidade, uf, ativa)
-    VALUES 
-        (v_empresa_1, 'Empresa Teste Alpha', '11.111.111/0001-11', 'ALPHA-01', 'Florianópolis', 'SC', true),
-        (v_empresa_2, 'Empresa Teste Beta', '22.222.222/0001-22', 'BETA-02', 'São José', 'SC', true);
-
-    -- Insere Perfis com a coluna oficial 'nome'
-    INSERT INTO public.perfis_usuarios (id, email, nome)
-    VALUES
-        (v_user_admin, 'admin@alpha.com', 'Admin Master'),
-        (v_user_gestor, 'gestor@alpha.com', 'Gestor Logística'),
-        (v_user_motorista, 'motorista@alpha.com', 'Motorista Teste'),
-        (v_user_suspenso, 'suspenso@alpha.com', 'Motorista Suspenso'),
-        (v_user_estranho, 'estranho@beta.com', 'Usuário Outra Empresa'),
-        (v_user_novo, 'novo@alpha.com', 'Novo Candidato')
-    ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, nome = EXCLUDED.nome;
-
-    -- Insere Membros
-    INSERT INTO public.empresa_membros (empresa_id, user_id, papel, status)
-    VALUES
-        (v_empresa_1, v_user_admin, 'admin', 'aprovado'),
-        (v_empresa_1, v_user_gestor, 'gestor', 'aprovado'),
-        (v_empresa_1, v_user_motorista, 'motorista', 'aprovado'),
-        (v_empresa_1, v_user_suspenso, 'motorista', 'suspenso'),
-        (v_empresa_2, v_user_estranho, 'motorista', 'aprovado');
-END $fixtures$;
-
--- =============================================================================
--- CENÁRIO 1: Instalação e integridade estrutural em banco
--- =============================================================================
-DO $cenario1$
-DECLARE
-    v_count INT;
-    v_idx_count INT;
-BEGIN
-    SELECT COUNT(*) INTO v_count 
-    FROM information_schema.columns 
-    WHERE table_schema = 'public' 
-      AND (
-        (table_name = 'veiculos_motoristas' AND column_name IN ('revisao', 'tamanho_compartimento')) OR
-        (table_name = 'veiculos_documentos' AND column_name IN ('angulo_foto', 'storage_path', 'status_analise'))
-      );
-
-    IF v_count < 5 THEN
-        RAISE EXCEPTION 'CENÁRIO 1 FALHOU: Colunas essenciais ausentes (esperado >= 5, encontrado %)', v_count;
-    END IF;
-
-    SELECT COUNT(*) INTO v_idx_count
-    FROM pg_indexes
-    WHERE schemaname = 'public'
-      AND indexname IN ('uq_veiculo_foto_angulo', 'uq_veiculo_crlv_ativo');
-
-    IF v_idx_count < 2 THEN
-        RAISE EXCEPTION 'CENÁRIO 1 FALHOU: Índices exclusivos de ângulo de foto e CRLV ausentes';
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 1 PASSOU: Instalação estrutural e integridade de colunas/índices verificada';
-END $cenario1$;
-
--- =============================================================================
--- CENÁRIO 2: Migração a partir da versão anterior suportada e helpers de autorização
--- =============================================================================
-DO $cenario2$
-DECLARE
-    v_auth_ok JSONB;
-    v_auth_suspenso JSONB;
-    v_auth_estranho JSONB;
-BEGIN
-    -- Motorista aprovado deve ser autorizado
-    v_auth_ok := public.fn_validar_autorizacao_condutor(
-        '11111111-1111-1111-1111-111111111111',
-        'cccccccc-cccc-cccc-cccc-cccccccccccc'
-    );
-    IF (v_auth_ok->>'autorizado')::boolean != TRUE THEN
-        RAISE EXCEPTION 'CENÁRIO 2 FALHOU: Motorista ativo foi recusado: %', v_auth_ok;
-    END IF;
-
-    -- Motorista suspenso deve ser bloqueado com USUARIO_SUSPENSO
-    v_auth_suspenso := public.fn_validar_autorizacao_condutor(
-        '11111111-1111-1111-1111-111111111111',
-        'dddddddd-dddd-dddd-dddd-dddddddddddd'
-    );
-    IF (v_auth_suspenso->>'autorizado')::boolean = TRUE OR (v_auth_suspenso->>'codigo') != 'USUARIO_SUSPENSO' THEN
-        RAISE EXCEPTION 'CENÁRIO 2 FALHOU: Usuário suspenso não foi bloqueado corretamente: %', v_auth_suspenso;
-    END IF;
-
-    -- Usuário de outra empresa deve ser bloqueado com SEM_VINCULO_ATIVO
-    v_auth_estranho := public.fn_validar_autorizacao_condutor(
-        '11111111-1111-1111-1111-111111111111',
-        'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
-    );
-    IF (v_auth_estranho->>'autorizado')::boolean = TRUE THEN
-        RAISE EXCEPTION 'CENÁRIO 2 FALHOU: Usuário de outra empresa foi autorizado indevidamente: %', v_auth_estranho;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 2 PASSOU: Helper fn_validar_autorizacao_condutor operando com precisão';
-END $cenario2$;
-
--- =============================================================================
--- CENÁRIO 3: Assinaturas antigas não existem em pg_proc (sem sobrecarga insegura)
--- =============================================================================
-DO $cenario3$
-DECLARE
-    v_anexar_old INT;
-    v_analisar_old INT;
-    v_aprovar_old INT;
-BEGIN
-    SELECT COUNT(*) INTO v_anexar_old
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public' AND p.proname = 'anexar_documento_veiculo' AND pronargs = 5;
-
-    SELECT COUNT(*) INTO v_analisar_old
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public' AND p.proname = 'analisar_veiculo_motorista' AND pronargs = 3;
-
-    SELECT COUNT(*) INTO v_aprovar_old
-    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public' AND p.proname = 'aprovar_solicitacao_motorista' AND pronargs = 5;
-
-    IF (v_anexar_old + v_analisar_old + v_aprovar_old) > 0 THEN
-        RAISE EXCEPTION 'CENÁRIO 3 FALHOU: Ainda existem sobrecargas obsoletas em pg_proc: anexar(%) analisar(%) aprovar(%)',
-            v_anexar_old, v_analisar_old, v_aprovar_old;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 3 PASSOU: Sobrecargas antigas removidas; assinaturas estritas confirmadas';
-END $cenario3$;
-
--- =============================================================================
--- CENÁRIO 4: Quatro fotos registradas com 1 objeto ausente no Storage barram aprovação
--- =============================================================================
-DO $cenario4$
-DECLARE
-    v_motorista UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-    v_admin UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    v_empresa UUID := '11111111-1111-1111-1111-111111111111';
-    v_veiculo_id UUID;
-    v_res JSONB;
-BEGIN
-    PERFORM set_config('request.jwt.claim.sub', v_motorista::text, true);
-
-    v_res := public.cadastrar_meu_veiculo(jsonb_build_object(
-        'tipo_veiculo', 'carro',
-        'marca', 'Volkswagen',
-        'modelo', 'Gol',
-        'placa', 'GOL1A23'
-    ));
-    SELECT id INTO v_veiculo_id FROM public.veiculos_motoristas WHERE user_id = v_motorista;
-
-    -- Simula presença de 3 fotos apenas em storage.objects (ausente a foto 'traseira')
-    INSERT INTO storage.objects (bucket_id, name, metadata)
-    VALUES 
-        ('veiculos-documentos', v_empresa || '/' || v_motorista || '/frente.jpg', '{"size": 500000, "mimetype": "image/jpeg"}'::jsonb),
-        ('veiculos-documentos', v_empresa || '/' || v_motorista || '/lado_dir.jpg', '{"size": 500000, "mimetype": "image/jpeg"}'::jsonb),
-        ('veiculos-documentos', v_empresa || '/' || v_motorista || '/lado_esq.jpg', '{"size": 500000, "mimetype": "image/jpeg"}'::jsonb);
-
-    PERFORM public.anexar_documento_veiculo(v_veiculo_id, 'foto_veiculo', 'frente.jpg', v_empresa || '/' || v_motorista || '/frente.jpg', 500000, 'frente');
-    PERFORM public.anexar_documento_veiculo(v_veiculo_id, 'foto_veiculo', 'lado_dir.jpg', v_empresa || '/' || v_motorista || '/lado_dir.jpg', 500000, 'lado_direito');
-    PERFORM public.anexar_documento_veiculo(v_veiculo_id, 'foto_veiculo', 'lado_esq.jpg', v_empresa || '/' || v_motorista || '/lado_esq.jpg', 500000, 'lado_esquerdo');
-
-    -- Registra metadado da foto traseira sem correspondência no Storage
-    INSERT INTO public.veiculos_documentos (
-        veiculo_id, user_id, empresa_id, tipo_documento, angulo_foto, nome_arquivo, storage_path, mime_type, tamanho_bytes, status_analise
-    ) VALUES (
-        v_veiculo_id, v_motorista, v_empresa, 'foto_veiculo', 'traseira', 'traseira.jpg', v_empresa || '/' || v_motorista || '/traseira.jpg', 'image/jpeg', 500000, 'pendente'
-    );
-
-    -- Insere CRLV no Storage e banco
-    INSERT INTO storage.objects (bucket_id, name, metadata)
-    VALUES ('veiculos-documentos', v_empresa || '/' || v_motorista || '/crlv.pdf', '{"size": 600000, "mimetype": "application/pdf"}'::jsonb);
-    INSERT INTO public.veiculos_documentos (
-        veiculo_id, user_id, empresa_id, tipo_documento, angulo_foto, nome_arquivo, storage_path, mime_type, tamanho_bytes, status_analise
-    ) VALUES (
-        v_veiculo_id, v_motorista, v_empresa, 'crlv', NULL, 'crlv.pdf', v_empresa || '/' || v_motorista || '/crlv.pdf', 'application/pdf', 600000, 'pendente'
-    );
-
-    -- Gestor tenta aprovar informando a revisão esperada (1)
-    PERFORM set_config('request.jwt.claim.sub', v_admin::text, true);
-    v_res := public.analisar_veiculo_motorista(v_veiculo_id, true, 4);
-
-    IF (v_res->>'sucesso')::boolean = true OR (v_res->>'codigo') != 'ARQUIVO_FISICO_AUSENTE' THEN
-        RAISE EXCEPTION 'CENÁRIO 4 FALHOU: Veículo com 1 foto ausente no Storage foi aprovado: %', v_res;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 4 PASSOU: Validação no Storage barrou aprovação devido a foto traseira ausente';
-END $cenario4$;
-
--- =============================================================================
--- CENÁRIO 5: CRLV registrado com objeto ausente no Storage barra aprovação
--- =============================================================================
-DO $cenario5$
-DECLARE
-    v_motorista UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-    v_admin UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    v_empresa UUID := '11111111-1111-1111-1111-111111111111';
-    v_veiculo_id UUID;
-    v_revisao_atual INT;
-    v_res JSONB;
-BEGIN
-    SELECT id, revisao INTO v_veiculo_id, v_revisao_atual FROM public.veiculos_motoristas WHERE user_id = v_motorista;
-
-    -- Insere o arquivo da foto traseira no Storage
-    INSERT INTO storage.objects (bucket_id, name, metadata)
-    VALUES ('veiculos-documentos', v_empresa || '/' || v_motorista || '/traseira.jpg', '{"size": 500000, "mimetype": "image/jpeg"}'::jsonb);
-
-    -- Remove o objeto do CRLV do Storage
-    DELETE FROM storage.objects WHERE bucket_id = 'veiculos-documentos' AND name = v_empresa || '/' || v_motorista || '/crlv.pdf';
-
-    PERFORM set_config('request.jwt.claim.sub', v_admin::text, true);
-    v_res := public.analisar_veiculo_motorista(v_veiculo_id, true, v_revisao_atual);
-
-    IF (v_res->>'sucesso')::boolean = true OR (v_res->>'codigo') != 'ARQUIVO_FISICO_AUSENTE' THEN
-        RAISE EXCEPTION 'CENÁRIO 5 FALHOU: Veículo com CRLV ausente no Storage foi aprovado: %', v_res;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 5 PASSOU: Validação no Storage barrou aprovação devido a CRLV ausente';
-END $cenario5$;
-
--- =============================================================================
--- CENÁRIO 6: Exclusão direta de evidência vinculada é impedida pelo RLS de Storage
--- =============================================================================
-DO $cenario6$
-DECLARE
-    v_motorista UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-    v_admin UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    v_empresa UUID := '11111111-1111-1111-1111-111111111111';
-    v_veiculo_id UUID;
-    v_crlv_path TEXT := v_empresa || '/' || v_motorista || '/crlv.pdf';
-    v_doc_crlv_id UUID;
-    v_res JSONB;
-    v_is_linked BOOLEAN;
-BEGIN
-    SELECT id INTO v_veiculo_id FROM public.veiculos_motoristas WHERE user_id = v_motorista;
-
-    -- Recria objeto de metadado do CRLV
-    INSERT INTO storage.objects (bucket_id, name, metadata)
-    VALUES ('veiculos-documentos', v_crlv_path, '{"size": 600000, "mimetype": "application/pdf"}'::jsonb)
-    ON CONFLICT (id) DO NOTHING;
-
-    SELECT id INTO v_doc_crlv_id FROM public.veiculos_documentos WHERE storage_path = v_crlv_path;
-
-    -- 1. Enquanto o arquivo estiver vinculado em veiculos_documentos:
-    -- A política DELETE de storage.objects avalia NOT EXISTS (SELECT 1 FROM veiculos_documentos WHERE storage_path = name)
-    SELECT EXISTS (
-        SELECT 1 FROM public.veiculos_documentos WHERE storage_path = v_crlv_path
-    ) INTO v_is_linked;
-
-    IF v_is_linked != TRUE THEN
-        RAISE EXCEPTION 'CENÁRIO 6 FALHOU: Evidência deveria estar vinculada';
-    END IF;
-
-    -- 2. Motorista remove autorizadamente o documento via RPC
-    PERFORM set_config('request.jwt.claim.sub', v_motorista::text, true);
-    v_res := public.remover_documento_veiculo(v_doc_crlv_id);
-
-    IF (v_res->>'sucesso')::boolean != true THEN
-        RAISE EXCEPTION 'CENÁRIO 6 FALHOU ao desvincular documento via RPC: %', v_res;
-    END IF;
-
-    -- 3. Agora que o documento foi desvinculado no Postgres, a evidência pode ser excluída no Storage
-    SELECT EXISTS (
-        SELECT 1 FROM public.veiculos_documentos WHERE storage_path = v_crlv_path
-    ) INTO v_is_linked;
-
-    IF v_is_linked = TRUE THEN
-        RAISE EXCEPTION 'CENÁRIO 6 FALHOU: Evidência não foi desvinculada após RPC remover_documento_veiculo';
-    END IF;
-
-    -- Agora a remoção em storage.objects é autorizada pela política RLS
-    DELETE FROM storage.objects WHERE bucket_id = 'veiculos-documentos' AND name = v_crlv_path;
-
-    RAISE NOTICE 'CENÁRIO 6 PASSOU: Política de ciclo de vida protege evidência vinculada e libera após RPC';
-END $cenario6$;
-
--- =============================================================================
--- CENÁRIO 7 & 8: Recusa de Aprovação com Revisão Desatualizada (Concorrência Otimista)
--- =============================================================================
-DO $cenario7_8$
-DECLARE
-    v_motorista UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-    v_admin UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    v_empresa UUID := '11111111-1111-1111-1111-111111111111';
-    v_veiculo_id UUID;
-    v_revisao_original INT;
-    v_revisao_nova INT;
-    v_res JSONB;
-BEGIN
-    SELECT id, revisao INTO v_veiculo_id, v_revisao_original FROM public.veiculos_motoristas WHERE user_id = v_motorista;
-
-    -- Reanexa CRLV para deixar veículo completo
-    INSERT INTO storage.objects (bucket_id, name, metadata)
-    VALUES ('veiculos-documentos', v_empresa || '/' || v_motorista || '/crlv_v2.pdf', '{"size": 600000, "mimetype": "application/pdf"}'::jsonb);
-
-    PERFORM set_config('request.jwt.claim.sub', v_motorista::text, true);
-    PERFORM public.anexar_documento_veiculo(
-        v_veiculo_id, 'crlv', 'crlv_v2.pdf', v_empresa || '/' || v_motorista || '/crlv_v2.pdf', 600000, NULL
-    );
-
-    -- Pega nova revisão após anexação pelo motorista
-    SELECT revisao INTO v_revisao_nova FROM public.veiculos_motoristas WHERE id = v_veiculo_id;
-    IF v_revisao_nova <= v_revisao_original THEN
-        RAISE EXCEPTION 'CENÁRIO 7 FALHOU: Revisão não subiu após anexar novo documento';
-    END IF;
-
-    -- Gestor tenta aprovar usando a revisão antiga (v_revisao_original), simulando corrida
-    PERFORM set_config('request.jwt.claim.sub', v_admin::text, true);
-    v_res := public.analisar_veiculo_motorista(v_veiculo_id, true, v_revisao_original);
-
-    IF (v_res->>'sucesso')::boolean = true OR (v_res->>'codigo') != 'REVISAO_DESATUALIZADA' THEN
-        RAISE EXCEPTION 'CENÁRIO 7 FALHOU: Aprovação com revisão desatualizada foi aceita indevidamente: %', v_res;
-    END IF;
-
-    -- Agora gestor aprova com a revisão correta
-    v_res := public.analisar_veiculo_motorista(v_veiculo_id, true, v_revisao_nova);
-    IF (v_res->>'sucesso')::boolean != true THEN
-        RAISE EXCEPTION 'CENÁRIO 8 FALHOU: Aprovação com revisão esperada correta foi rejeitada: %', v_res;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 7 & 8 PASSOU: Proteção contra decisão com revisão desatualizada validada';
-END $cenario7_8$;
-
--- =============================================================================
--- CENÁRIO 9: Repetição após falha parcial não duplica dados (idempotência autorizada)
--- =============================================================================
-DO $cenario9$
-DECLARE
-    v_admin UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    v_estranho UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
-    v_novo_user UUID := 'ffffffff-ffff-ffff-ffff-ffffffffffff';
-    v_empresa UUID := '11111111-1111-1111-1111-111111111111';
-    v_solicitacao_id UUID;
-    v_res_1 JSONB;
-    v_res_2 JSONB;
-    v_res_hacker JSONB;
-BEGIN
-    PERFORM set_config('request.jwt.claim.sub', v_novo_user::text, true);
-    PERFORM public.solicitar_acesso_empresa('ALPHA-01');
-
-    SELECT id INTO v_solicitacao_id 
-    FROM public.solicitacoes_acesso 
-    WHERE user_id = v_novo_user AND empresa_id = v_empresa;
-
-    -- 1. Gestor aprova (Opção A)
-    PERFORM set_config('request.jwt.claim.sub', v_admin::text, true);
-    v_res_1 := public.aprovar_solicitacao_motorista(v_solicitacao_id, NULL, TRUE);
-    IF (v_res_1->>'sucesso')::boolean != true THEN
-        RAISE EXCEPTION 'CENÁRIO 9 FALHOU na aprovação de motorista: %', v_res_1;
-    END IF;
-
-    -- 2. Repetição autorizada retorna JA_APROVADO
-    v_res_2 := public.aprovar_solicitacao_motorista(v_solicitacao_id, NULL, TRUE);
-    IF (v_res_2->>'sucesso')::boolean != true OR (v_res_2->>'codigo') != 'JA_APROVADO' THEN
-        RAISE EXCEPTION 'CENÁRIO 9 FALHOU: Repetição não retornou JA_APROVADO: %', v_res_2;
-    END IF;
-
-    -- 3. Chamada não autorizada (usuário de outra empresa) DEVE receber ACESSO_NEGADO antes de JA_APROVADO
-    PERFORM set_config('request.jwt.claim.sub', v_estranho::text, true);
-    v_res_hacker := public.aprovar_solicitacao_motorista(v_solicitacao_id, NULL, TRUE);
-    IF (v_res_hacker->>'sucesso')::boolean = true OR (v_res_hacker->>'codigo') != 'ACESSO_NEGADO' THEN
-        RAISE EXCEPTION 'CENÁRIO 9 FALHOU: Usuário não autorizado conseguiu obter JA_APROVADO: %', v_res_hacker;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 9 PASSOU: Idempotência checa autorização previamente e não vaza dados';
-END $cenario9$;
-
--- =============================================================================
--- CENÁRIO 10: Usuário de outra empresa não acessa nem altera evidências
--- =============================================================================
-DO $cenario10$
-DECLARE
-    v_estranho UUID := 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
-    v_contagem INT;
-BEGIN
-    PERFORM set_config('request.jwt.claim.sub', v_estranho::text, true);
-
-    SELECT COUNT(*) INTO v_contagem 
-    FROM public.veiculos_motoristas 
-    WHERE empresa_id = '11111111-1111-1111-1111-111111111111';
-
-    IF v_contagem > 0 THEN
-        RAISE EXCEPTION 'CENÁRIO 10 FALHOU: Usuário de outra empresa conseguiu ler veículos da Empresa 1';
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 10 PASSOU: Isolamento de dados entre empresas garantido';
-END $cenario10$;
-
--- =============================================================================
--- CENÁRIO 11: Usuário suspenso tentando anexar arquivo previamente enviado é bloqueado
--- =============================================================================
-DO $cenario11$
-DECLARE
-    v_suspenso UUID := 'dddddddd-dddd-dddd-dddd-dddddddddddd';
-    v_empresa UUID := '11111111-1111-1111-1111-111111111111';
-    v_veiculo_suspenso UUID;
-    v_res JSONB;
-BEGIN
-    -- Cria veículo prévio para o usuário suspenso (antes da suspensão)
-    INSERT INTO public.veiculos_motoristas (
-        user_id, empresa_id, tipo_veiculo, marca, modelo, placa, status_analise
-    ) VALUES (
-        v_suspenso, v_empresa, 'carro', 'Fiat', 'Mobi', 'SUS1A23', 'pendente'
-    ) RETURNING id INTO v_veiculo_suspenso;
-
-    -- Simula arquivo pré-existente no Storage enviado antes da suspensão
-    INSERT INTO storage.objects (bucket_id, name, metadata)
-    VALUES ('veiculos-documentos', v_empresa || '/' || v_suspenso || '/antigo.jpg', '{"size": 300000, "mimetype": "image/jpeg"}'::jsonb);
-
-    -- Usuário agora suspenso tenta anexar esse arquivo pré-existente
-    PERFORM set_config('request.jwt.claim.sub', v_suspenso::text, true);
-    v_res := public.anexar_documento_veiculo(
-        v_veiculo_suspenso, 'foto_veiculo', 'antigo.jpg', v_empresa || '/' || v_suspenso || '/antigo.jpg', 300000, 'frente'
-    );
-
-    IF (v_res->>'sucesso')::boolean = true OR (v_res->>'codigo') != 'USUARIO_SUSPENSO' THEN
-        RAISE EXCEPTION 'CENÁRIO 11 FALHOU: Usuário suspenso conseguiu anexar documento pré-existente: %', v_res;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 11 PASSOU: RPC bloqueia usuário suspenso mesmo com arquivo previamente em storage';
-END $cenario11$;
-
--- =============================================================================
--- CENÁRIO 12: Execução fiel do contrato mobile Flutter (obter_meu_status_acesso)
--- =============================================================================
-DO $cenario12$
-DECLARE
-    v_motorista UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-    v_res JSONB;
-BEGIN
-    PERFORM set_config('request.jwt.claim.sub', v_motorista::text, true);
-    v_res := public.obter_meu_status_acesso();
-
-    IF v_res IS NULL OR (v_res->>'autenticado')::boolean != true THEN
-        RAISE EXCEPTION 'CENÁRIO 12 FALHOU: obter_meu_status_acesso retornou contrato inválido: %', v_res;
-    END IF;
-
-    RAISE NOTICE 'CENÁRIO 12 PASSOU: RPC do contrato Flutter executou com fidelidade total';
-END $cenario12$;
-
-DO $final$
-BEGIN
-    RAISE NOTICE '=============================================================';
-    RAISE NOTICE 'TODOS OS 12 CENÁRIOS DE TESTE PASSARAM COM SUCESSO!';
-    RAISE NOTICE '=============================================================';
-END $final$;
-
+    PERFORM set_config('request.jwt.claim.sub',admin_a::text,true);
+    result := public.salvar_cliente_endereco(jsonb_build_object('empresa_id',company_a,'nome_identificador','Novo cliente','endereco_completo','Endereço informado','latitude',-27.5,'longitude',-48.5));
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'gestor salva endereço pelo RPC');
+    result := public.salvar_cliente_endereco(jsonb_build_object('empresa_id',company_b,'nome_identificador','Outra empresa','endereco_completo','Endereço informado','latitude',-27.5,'longitude',-48.5));
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean=false,'gestor não grava cliente de outra empresa');
+    PERFORM set_config('request.jwt.claim.sub',outsider::text,true);
+    result := public.salvar_cliente_endereco(jsonb_build_object('empresa_id',company_a,'nome_identificador','Sem vínculo','endereco_completo','Endereço informado','latitude',-27.5,'longitude',-48.5));
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean=false,'conta sem vínculo não grava cliente');
+    PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+    SELECT id INTO car_id FROM public.veiculos_motoristas WHERE user_id=driver_a;
+    PERFORM pg_temp.check_result(car_id IS NOT NULL,'cadastro funciona após instalação/atualização');
+    PERFORM pg_temp.check_result(
+        NOT has_function_privilege('anon','public.iniciar_rota(uuid)','EXECUTE')
+        AND NOT has_function_privilege('anon','public.concluir_rota(uuid)','EXECUTE')
+        AND NOT has_function_privilege('anon','public.registrar_limpeza_storage_executada(uuid,uuid,boolean,text)','EXECUTE'),
+        'anon não executa RPCs sensíveis');
+    PERFORM pg_temp.check_result(
+        to_regprocedure('public.registrar_limpeza_storage_executada(uuid,boolean,text)') IS NULL
+        AND to_regprocedure('public.reivindicar_itens_limpeza_storage(integer)') IS NULL,
+        'assinaturas antigas de limpeza foram removidas');
+
+    PERFORM pg_temp.check_result(NOT has_function_privilege('anon','public.bootstrap_primeiro_gestor(text,text,text)','EXECUTE')
+        AND NOT has_function_privilege('authenticated','public.bootstrap_primeiro_gestor(text,text,text)','EXECUTE'),
+        'bootstrap administrativo restrito à service_role');
+    PERFORM pg_temp.check_result(to_regprocedure('public.aprovar_solicitacao_motorista(uuid,uuid)') IS NULL,
+        'aprovação legada de dois argumentos não pode contornar o contrato');
+
+    PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+    FOREACH angle IN ARRAY ARRAY['frente','lado_direito','lado_esquerdo','traseira'] LOOP
+        reservation:=public.reservar_upload_evidencia(company_a,'foto_veiculo',angle||'.jpg',angle);
+        PERFORM pg_temp.check_result((reservation->>'sucesso')::boolean,'reserva de foto '||angle);
+        storage_path_value:=reservation->>'storage_path';
+        -- Fixture SQL de metadados sob o papel real da política.
+        PERFORM set_config('role','authenticated',true);
+        INSERT INTO storage.objects(bucket_id,name,metadata)
+        VALUES('veiculos-documentos',storage_path_value,'{"size":500,"mimetype":"image/jpeg"}');
+        PERFORM set_config('role','postgres',true);
+        result:=public.anexar_documento_veiculo(car_id,'foto_veiculo',angle||'.jpg',storage_path_value,500,angle);
+        PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'anexação reservada '||angle);
+        IF angle='frente' THEN front_id:=(result->>'documento_id')::uuid; END IF;
+    END LOOP;
+    reservation:=public.reservar_upload_evidencia(company_a,'crlv','crlv.pdf');
+    storage_path_value:=reservation->>'storage_path';
+    INSERT INTO storage.objects(bucket_id,name,metadata) VALUES('veiculos-documentos',storage_path_value,'{"size":500,"mimetype":"application/pdf"}');
+    result:=public.anexar_documento_veiculo(car_id,'crlv','crlv.pdf',storage_path_value,500);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'CRLV reservado vinculado');
+    doc_id:=(result->>'documento_id')::uuid;
+    PERFORM set_config('request.jwt.claim.sub',admin_a::text,true);
+    SELECT revisao INTO revision FROM public.veiculos_motoristas WHERE id=car_id;
+    result:=public.analisar_veiculo_motorista(car_id,true,revision-1);
+    PERFORM pg_temp.check_result(result->>'codigo'='REVISAO_DESATUALIZADA','aprovação recusa revisão antiga');
+    result:=public.analisar_veiculo_motorista(car_id,true,revision);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'veículo completo pode ser aprovado');
+
+    -- Uma confirmação não pode mudar uma reserva nem um arquivo vinculado.
+    PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+    SELECT id INTO fila_id FROM public.storage_limpeza_fila WHERE storage_path=storage_path_value;
+    result:=public.registrar_limpeza_storage_executada(fila_id,gen_random_uuid(),true);
+    PERFORM pg_temp.check_result(result->>'codigo'='CLAIM_INVALIDO'
+        AND (SELECT status='vinculado' FROM public.storage_limpeza_fila WHERE id=fila_id),
+        'confirmação não altera evidência vinculada');
+    reservation:=public.reservar_upload_evidencia(company_a,'complementar','reserva.pdf');
+    result:=public.registrar_limpeza_storage_executada((reservation->>'fila_id')::uuid,gen_random_uuid(),false);
+    PERFORM pg_temp.check_result(result->>'codigo'='CLAIM_INVALIDO','confirmação não altera reserva');
+
+    PERFORM set_config('role','authenticated',true);
+    DELETE FROM storage.objects WHERE name=storage_path_value AND bucket_id='veiculos-documentos';
+    GET DIAGNOSTICS n=ROW_COUNT;
+    PERFORM set_config('role','postgres',true);
+    PERFORM pg_temp.check_result(n=0,'RLS bloqueia DELETE de evidência vinculada');
+    PERFORM set_config('role','authenticated',true);
+    UPDATE storage.objects SET metadata='{"size":1}' WHERE name=storage_path_value;
+    GET DIAGNOSTICS n=ROW_COUNT;
+    PERFORM set_config('role','postgres',true);
+    PERFORM pg_temp.check_result(n=0,'RLS bloqueia sobrescrita');
+
+    result:=public.remover_documento_veiculo(doc_id);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean
+        AND (SELECT status_analise='pendente' FROM public.veiculos_motoristas WHERE id=car_id),
+        'desvincular CRLV invalida aprovação');
+    fila_id:=(result->>'fila_id')::uuid;
+    result:=public.remover_documento_veiculo(doc_id);
+    PERFORM pg_temp.check_result(result->>'codigo'='DOCUMENTO_NAO_ENCONTRADO','remoção repetida não reabre fila');
+    PERFORM set_config('role','authenticated',true);
+    DELETE FROM storage.objects WHERE name=storage_path_value;
+    GET DIAGNOSTICS n=ROW_COUNT;
+    PERFORM set_config('role','postgres',true);
+    PERFORM pg_temp.check_result(n=0,'DELETE exige reivindicação prévia');
+    SELECT * INTO claim FROM public.reivindicar_itens_limpeza_storage(1,fila_id);
+    PERFORM pg_temp.check_result(claim.claim_token IS NOT NULL AND claim.tentativas=1,'claim identifica e conta tentativa');
+    result:=public.registrar_limpeza_storage_executada(fila_id,claim.claim_token,true);
+    PERFORM pg_temp.check_result(result->>'codigo'='OBJETO_AINDA_PRESENTE','não confirma remoção enquanto metadado existe');
+    PERFORM set_config('role','authenticated',true);
+    DELETE FROM storage.objects WHERE name=storage_path_value;
+    GET DIAGNOSTICS n=ROW_COUNT;
+    PERFORM set_config('role','postgres',true);
+    PERFORM pg_temp.check_result(n=1,'RLS permite DELETE pelo responsável durante lease');
+    result:=public.registrar_limpeza_storage_executada(fila_id,claim.claim_token,true);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean AND result->>'status'='concluido','confirma remoção com token atual');
+    result:=public.registrar_limpeza_storage_executada(fila_id,claim.claim_token,false,'resposta repetida');
+    PERFORM pg_temp.check_result(result->>'codigo'='JA_CONCLUIDO'
+        AND (SELECT tentativas=1 FROM public.storage_limpeza_fila WHERE id=fila_id),
+        'repetição não reabre concluído nem conta outra tentativa');
+
+    reservation:=public.reservar_upload_evidencia(company_a,'complementar','falha.pdf');
+    fila_id:=(reservation->>'fila_id')::uuid;
+    result:=public.descartar_evidencia_temporaria(reservation->>'storage_path');
+    UPDATE public.storage_limpeza_fila SET max_tentativas=2 WHERE id=fila_id;
+    SELECT * INTO claim FROM public.reivindicar_itens_limpeza_storage(1,fila_id);
+    UPDATE public.storage_limpeza_fila SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=fila_id;
+    SELECT * INTO claim2 FROM public.reivindicar_itens_limpeza_storage(1,fila_id);
+    result:=public.registrar_limpeza_storage_executada(fila_id,claim.claim_token,false,'retorno antigo');
+    PERFORM pg_temp.check_result(result->>'codigo'='CLAIM_INVALIDO'
+        AND (SELECT claim_token=claim2.claim_token AND status='em_processamento' FROM public.storage_limpeza_fila WHERE id=fila_id),
+        'token antigo não altera tentativa recuperada');
+    result:=public.registrar_limpeza_storage_executada(fila_id,claim2.claim_token,false,'HTTP indisponível');
+    PERFORM pg_temp.check_result(result->>'status'='falhou','interrupção e falha consomem limite');
+    result:=public.anexar_documento_veiculo(car_id,'complementar','falha.pdf',reservation->>'storage_path',500);
+    PERFORM pg_temp.check_result(result->>'codigo'='ARQUIVO_DESCARTADO','falhou não permite reutilizar caminho');
+    result:=public.retomar_limpeza_falha(fila_id);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean
+        AND (SELECT claim_token IS NULL AND tentativas=0 FROM public.storage_limpeza_fila WHERE id=fila_id),
+        'retomada invalida token anterior e preserva auditoria');
+    PERFORM pg_temp.check_result((SELECT count(*)>=3 FROM public.auditoria_acessos WHERE detalhes->>'fila_id'=fila_id::text),'tentativas e retomada possuem auditoria');
+
+    reservation:=public.reservar_upload_evidencia(company_a,'complementar','descartado.pdf');
+    result:=public.descartar_evidencia_temporaria(reservation->>'storage_path');
+    result:=public.anexar_documento_veiculo(car_id,'complementar','descartado.pdf',reservation->>'storage_path',500);
+    PERFORM pg_temp.check_result(result->>'codigo'='ARQUIVO_EM_LIMPEZA','descarte impede vinculação posterior');
+
+    -- Isolamento e preservação dos documentos na troca de empresa.
+    INSERT INTO public.empresa_membros(empresa_id,user_id,papel,status) VALUES(company_b,driver_a,'motorista','pendente');
+    INSERT INTO public.solicitacoes_acesso(empresa_id,user_id,papel_solicitado,status) VALUES(company_b,driver_a,'motorista','pendente');
+    result:=public.cadastrar_meu_veiculo(jsonb_build_object('empresa_id',company_b,'tipo_veiculo','carro','marca','X','modelo','Y','placa','ABC1D23'));
+    PERFORM pg_temp.check_result(result->>'codigo'='VEICULO_OUTRA_EMPRESA'
+        AND (SELECT empresa_id=company_a FROM public.veiculos_motoristas WHERE id=car_id)
+        AND (SELECT count(*)=4 FROM public.veiculos_documentos WHERE veiculo_id=car_id AND empresa_id=company_a),
+        'troca de empresa recusa e preserva veículo e quatro fotos');
+    result:=public.cadastrar_meu_veiculo('{"tipo_veiculo":"carro","marca":"X","modelo":"Y","placa":"ABC1D23"}');
+    PERFORM pg_temp.check_result(result->>'codigo'='EMPRESA_OBRIGATORIA','vários vínculos exigem empresa explícita');
+
+    -- Recusa de aprovação não deixa cadastro parcial.
+    SELECT id INTO candidate_car FROM public.veiculos_motoristas WHERE user_id=candidate;
+    INSERT INTO public.solicitacoes_acesso(empresa_id,user_id,papel_solicitado,status)
+    VALUES(company_a,candidate,'motorista','pendente') ON CONFLICT(empresa_id,user_id) DO UPDATE SET status='pendente' RETURNING id INTO request_id;
+    SELECT count(*) INTO count_before FROM public.motoristas;
+    PERFORM set_config('request.jwt.claim.sub',admin_a::text,true);
+    result:=public.aprovar_solicitacao_motorista(request_id,null,true,'Candidato','000',true,99);
+    SELECT count(*) INTO count_after FROM public.motoristas;
+    PERFORM pg_temp.check_result(result->>'codigo'='REVISAO_DESATUALIZADA' AND count_before=count_after,'aprovação recusada não cria motorista');
+    result:=public.aprovar_solicitacao_motorista(request_id,null,true,'Candidato','000',true,null);
+    PERFORM pg_temp.check_result(result->>'codigo'='REVISAO_OBRIGATORIA','aprovação do veículo exige revisão');
+    INSERT INTO public.solicitacoes_acesso(empresa_id,user_id,papel_solicitado,status)
+    VALUES(company_b,candidate,'motorista','pendente') RETURNING id INTO request_id;
+    PERFORM set_config('request.jwt.claim.sub',admin_b::text,true);
+    result:=public.aprovar_solicitacao_motorista(request_id,null,true,'Candidato','000',true,1);
+    PERFORM pg_temp.check_result(result->>'codigo'='VEICULO_OUTRA_EMPRESA','gestor B não aprova veículo de A');
+
+    -- Rotas: usuário sem motorista, gestor de outra empresa e veículo pendente.
+    INSERT INTO public.clientes_enderecos(empresa_id,nome_identificador,endereco_completo,numero,bairro,cidade,cep,latitude,longitude)
+    VALUES(company_a,'Condomínio teste','Rua teste','1','Centro','Cidade teste','00000000',0,0) RETURNING id INTO addr_id;
+    INSERT INTO public.rotas_planejadas(empresa_id,motorista_id,idempotency_key,distancia_original_km,tempo_original_minutos,distancia_otimizada_km,tempo_otimizado_minutos,percentual_economia_km,percentual_economia_tempo,ordem_paradas_json)
+    VALUES(company_a,'c1000000-0000-0000-0000-000000000001','regression',1,1,1,1,0,0,'[]') RETURNING id INTO route_id;
+    INSERT INTO public.entregas(empresa_id,codigo_rastreio,cliente_endereco_id,destinatario_nome,motorista_id,rota_id,status)
+    VALUES(company_a,'TEST-1',addr_id,'Teste','c1000000-0000-0000-0000-000000000001',route_id,'atribuida') RETURNING id INTO delivery_id;
+    PERFORM set_config('request.jwt.claim.sub',outsider::text,true);
+    result:=public.iniciar_rota(route_id);
+    PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','usuário sem motorista não inicia rota');
+    result:=public.concluir_rota(route_id);
+    PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','usuário sem motorista não conclui rota');
+    result:=public.registrar_conclusao_entrega(delivery_id,true);
+    PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','usuário sem motorista não baixa entrega');
+    PERFORM set_config('request.jwt.claim.sub',admin_b::text,true);
+    result:=public.iniciar_rota(route_id);
+    PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','gestor de outra empresa não opera rota');
+    PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+    result:=public.iniciar_rota(route_id);
+    PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','veículo pendente não é liberado para operar');
+
+    -- Recompor o CRLV por nova reserva e aprovar; o motorista correto passa.
+    reservation:=public.reservar_upload_evidencia(company_a,'crlv','novo-crlv.pdf');
+    storage_path_value:=reservation->>'storage_path';
+    INSERT INTO storage.objects(bucket_id,name,metadata) VALUES('veiculos-documentos',storage_path_value,'{"size":500,"mimetype":"application/pdf"}');
+    result:=public.anexar_documento_veiculo(car_id,'crlv','novo-crlv.pdf',storage_path_value,500);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'novo CRLV usa caminho novo');
+    SELECT revisao INTO revision FROM public.veiculos_motoristas WHERE id=car_id;
+    PERFORM set_config('request.jwt.claim.sub',admin_a::text,true);
+    result:=public.analisar_veiculo_motorista(car_id,true,revision);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'reaprovação após recomposição do CRLV');
+    PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+    PERFORM set_config('role','authenticated',true);
+    result:=public.iniciar_rota(route_id);
+    PERFORM set_config('role','postgres',true);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista atribuído e veículo aprovado inicia rota');
+    UPDATE public.empresa_membros SET status='suspenso' WHERE user_id=driver_a AND empresa_id=company_a;
+    result:=public.registrar_conclusao_entrega(delivery_id,true);
+    PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','suspensão impede baixa de entrega');
+    UPDATE public.empresa_membros SET status='aprovado' WHERE user_id=driver_a AND empresa_id=company_a;
+    result:=public.registrar_conclusao_entrega(delivery_id,true);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista autorizado registra entrega');
+    result:=public.concluir_rota(route_id);
+    PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista autorizado conclui rota atendida');
+END $tests$;
+SELECT count(*)::int AS passed, array_agg(name ORDER BY name) AS cases FROM regression_results;
 ROLLBACK;

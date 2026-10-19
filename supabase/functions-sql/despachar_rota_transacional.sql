@@ -62,7 +62,7 @@ BEGIN
     END IF;
 
     -- 2. VALIDAÇÃO DE AUTORIZAÇÃO ANTES DE QUALQUER LEITURA OU BLOQUEIO
-    IF NOT public.fn_usuario_e_gestor_empresa(v_empresa_id) THEN
+    IF NOT public.fn_usuario_e_gestor_empresa(v_empresa_id, auth.uid()) THEN
         RETURN jsonb_build_object(
             'sucesso', FALSE,
             'codigo', 'ACESSO_NEGADO',
