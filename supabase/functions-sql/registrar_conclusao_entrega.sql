@@ -61,6 +61,27 @@ BEGIN
         );
     END IF;
 
+    -- O lock da entrega torna reenvios idempotentes, inclusive após timeout.
+    IF v_entrega.status IN ('entregue', 'tentativa_falha', 'cancelada') THEN
+        IF v_entrega.status = (CASE WHEN p_sucesso THEN 'entregue' ELSE 'tentativa_falha' END) THEN
+            RETURN jsonb_build_object('sucesso', TRUE, 'codigo', 'ENTREGA_JA_REGISTRADA',
+                'entrega_id', v_entrega.id, 'status', v_entrega.status);
+        END IF;
+        RETURN jsonb_build_object('sucesso', FALSE, 'codigo', 'TRANSICAO_INVALIDA',
+            'mensagem', 'Esta tarefa já foi finalizada. Atualize a rota.');
+    END IF;
+
+    IF p_sucesso IS NULL OR (NOT p_sucesso AND NULLIF(trim(p_motivo_falha), '') IS NULL) THEN
+        RETURN jsonb_build_object('sucesso', FALSE, 'codigo', 'MOTIVO_OBRIGATORIO',
+            'mensagem', 'Informe o motivo da tentativa sem sucesso.');
+    END IF;
+
+    IF p_data_hora_chegada IS NOT NULL AND p_data_hora_conclusao IS NOT NULL
+       AND p_data_hora_chegada > p_data_hora_conclusao THEN
+        RETURN jsonb_build_object('sucesso', FALSE, 'codigo', 'HORARIO_INVALIDO',
+            'mensagem', 'O horário de conclusão deve ser posterior à chegada. Confira o relógio do aparelho.');
+    END IF;
+
     -- Define horários
     v_conclusao := COALESCE(p_data_hora_conclusao, timezone('utc'::text, now()));
     v_chegada := COALESCE(p_data_hora_chegada, v_conclusao - INTERVAL '10 minutes');
@@ -125,3 +146,4 @@ BEGIN
     );
 END;
 $$;
+
