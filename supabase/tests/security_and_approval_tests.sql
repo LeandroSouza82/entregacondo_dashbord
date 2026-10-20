@@ -324,6 +324,58 @@ BEGIN
     PERFORM pg_temp.check_result(NOT has_function_privilege('anon','public.atualizar_localizacao_motorista(uuid,double precision,double precision,numeric)','EXECUTE'),'anonymous GPS API revoked');
     result:=public.concluir_rota(route_id);
     PERFORM pg_temp.check_result((result->>'sucesso')::boolean,'motorista autorizado conclui rota atendida');
+
+    DECLARE
+      live uuid:=gen_random_uuid(); finished uuid:=gen_random_uuid(); attending uuid:=gen_random_uuid(); later uuid:=gen_random_uuid(); added uuid;
+      original_done jsonb; payload jsonb; plan jsonb; mixed jsonb; before_state jsonb; route_total int; arrival timestamptz:=now()-interval '2 minutes';
+    BEGIN
+      INSERT INTO public.rotas_planejadas(id,empresa_id,motorista_id,idempotency_key,status,distancia_original_km,tempo_original_minutos,distancia_otimizada_km,tempo_otimizado_minutos,percentual_economia_km,percentual_economia_tempo,configuracao_navegacao,ordem_paradas_json)
+      VALUES(live,company_a,'c1000000-0000-0000-0000-000000000001','COLLECTION-LIVE','em_execucao',20,40,20,40,0,0,'{"latitude":-27.4,"longitude":-48.4,"retornar_ao_inicio":true}','[]');
+      INSERT INTO public.entregas(id,empresa_id,rota_id,motorista_id,cliente_endereco_id,codigo_rastreio,destinatario_nome,status,ordem_na_rota,chegada_em) VALUES
+       (finished,company_a,live,'c1000000-0000-0000-0000-000000000001',addr_id,'COLLECTION-DONE','Done','entregue',1,now()-interval '1 hour'),
+       (attending,company_a,live,'c1000000-0000-0000-0000-000000000001',addr_id,'COLLECTION-ATTENDING','Attending','em_transito',2,arrival),
+       (later,company_a,live,'c1000000-0000-0000-0000-000000000001',addr_id,'COLLECTION-LATER','Later','atribuida',3,NULL);
+      SELECT to_jsonb(e) INTO original_done FROM public.entregas e WHERE id=finished;
+      payload:=jsonb_build_object('empresa_id',company_a,'motorista_id','c1000000-0000-0000-0000-000000000001','idempotency_key','COLLECTION-REQ','paradas',jsonb_build_array(jsonb_build_object('cliente_endereco_id',addr_id,'codigo_rastreio','COLLECTION-NEW','destinatario_nome','New pickup','tipo_tarefa','coleta')));
+      SELECT jsonb_build_object('rota_id',live,'origem',jsonb_build_object('lat',-27.5,'lng',-48.5),'snapshot',jsonb_agg(jsonb_build_object('id',id,'status',status,'ordem_na_rota',ordem_na_rota,'chegada_em',chegada_em)),'ordem',jsonb_build_array(attending,'nova:0',later),'metricas',jsonb_build_object('fonte','mapbox_directions_restante','distancia_km',7,'tempo_minutos',20)) INTO plan FROM public.entregas WHERE rota_id=live;
+      PERFORM set_config('request.jwt.claim.sub',driver_a::text,true);
+      result:=public.enviar_servicos_motorista(payload,plan);
+      PERFORM pg_temp.check_result(result->>'codigo'='ACESSO_NEGADO','driver cannot dispatch new services');
+      PERFORM set_config('request.jwt.claim.sub',admin_a::text,true);
+      result:=public.enviar_servicos_motorista(payload,NULL);
+      PERFORM pg_temp.check_result(result->>'codigo'='PLANO_COLETAS_NECESSARIO' AND (SELECT count(*)=3 FROM public.entregas WHERE rota_id=live),'preflight requests insertion plan without creating tasks');
+      UPDATE public.motoristas SET localizacao_atualizada_em=now()-interval '10 minutes',latitude_atual=-27.5,longitude_atual=-48.5 WHERE id='c1000000-0000-0000-0000-000000000001';
+      result:=public.enviar_servicos_motorista(payload,plan);
+      PERFORM pg_temp.check_result(result->>'sucesso'='false' AND (SELECT count(*)=3 FROM public.entregas WHERE rota_id=live),'stale GPS cannot insert or create another route');
+      UPDATE public.motoristas SET localizacao_atualizada_em=now() WHERE id='c1000000-0000-0000-0000-000000000001';
+      result:=public.enviar_servicos_motorista(payload,jsonb_set(plan,'{ordem}',jsonb_build_array('nova:0',attending,later)));
+      PERFORM pg_temp.check_result(result->>'sucesso'='false','ongoing attendance cannot be displaced');
+      SELECT count(*) INTO route_total FROM public.rotas_planejadas;
+      result:=public.enviar_servicos_motorista(payload,plan);
+      PERFORM pg_temp.check_result(result->>'sucesso'='true' AND (result->>'coletas_adicionadas')::int=1 AND (SELECT count(*)=route_total FROM public.rotas_planejadas),'collection joins existing active route without new route');
+      SELECT id INTO added FROM public.entregas WHERE codigo_rastreio='COLLECTION-NEW';
+      PERFORM pg_temp.check_result((SELECT ordem_na_rota=3 AND tipo_tarefa='coleta' AND rota_id=live FROM public.entregas WHERE id=added) AND (SELECT ordem_na_rota=4 FROM public.entregas WHERE id=later),'collection inserted between pending services');
+      PERFORM pg_temp.check_result((SELECT to_jsonb(e)=original_done FROM public.entregas e WHERE id=finished) AND (SELECT chegada_em=arrival AND ordem_na_rota=2 FROM public.entregas WHERE id=attending),'completed task and attendance timer preserved byte for byte');
+      PERFORM pg_temp.check_result((SELECT configuracao_navegacao->>'latitude'='-27.4' AND configuracao_navegacao->>'retornar_ao_inicio'='true' AND metricas_fonte='mapbox_directions_restante' AND distancia_otimizada_km=7 FROM public.rotas_planejadas WHERE id=live),'circuit origin retained and remaining road metrics updated');
+      result:=public.enviar_servicos_motorista(payload,plan);
+      PERFORM pg_temp.check_result(result->>'idempotente'='true' AND (SELECT count(*)=4 FROM public.entregas WHERE rota_id=live),'retry after stale snapshot never duplicates collection');
+      result:=public.enviar_servicos_motorista(jsonb_set(payload,'{paradas,0,codigo_rastreio}','"DIFFERENT"'),plan);
+      PERFORM pg_temp.check_result(result->>'codigo'='CONFLITO_IDEMPOTENCIA','same request key rejects changed services');
+      result:=public.enviar_servicos_motorista(jsonb_set(payload,'{idempotency_key}','"COLLECTION-STALE"'),plan);
+      PERFORM pg_temp.check_result(result->>'codigo'='PLANO_DESATUALIZADO','concurrent route change rejects stale plan atomically');
+      SELECT jsonb_set(plan,'{snapshot}',jsonb_agg(jsonb_build_object('id',id,'status',status,'ordem_na_rota',ordem_na_rota,'chegada_em',chegada_em))) INTO plan FROM public.entregas WHERE rota_id=live;
+      plan:=jsonb_set(plan,'{ordem}',jsonb_build_array(attending,added,'nova:0',later))||jsonb_build_object('metricas_nova_rota',jsonb_build_object('metricas_fonte','mapbox_directions_planejamento','distancia_original_km',4,'distancia_otimizada_km',4,'tempo_original_minutos',10,'tempo_otimizado_minutos',10));
+      mixed:=jsonb_set(payload,'{idempotency_key}','"COLLECTION-MIXED"');
+      mixed:=jsonb_set(mixed,'{paradas}',jsonb_build_array(jsonb_build_object('cliente_endereco_id',addr_id,'codigo_rastreio','MIXED-COLLECTION','destinatario_nome','Pickup','tipo_tarefa','coleta'),jsonb_build_object('cliente_endereco_id',gen_random_uuid(),'codigo_rastreio','MIXED-DELIVERY','destinatario_nome','Delivery','tipo_tarefa','entrega')));
+      SELECT jsonb_agg(to_jsonb(e) ORDER BY id) INTO before_state FROM public.entregas e WHERE rota_id=live;
+      result:=public.enviar_servicos_motorista(mixed,plan);
+      PERFORM pg_temp.check_result(result->>'sucesso'='false' AND (SELECT jsonb_agg(to_jsonb(e) ORDER BY id)=before_state FROM public.entregas e WHERE rota_id=live) AND NOT EXISTS(SELECT 1 FROM public.operacoes_envio_motorista WHERE chave='COLLECTION-MIXED'),'failed new delivery rolls back inserted collection and every reordered stop');
+      mixed:=jsonb_set(mixed,'{paradas,1,cliente_endereco_id}',to_jsonb(addr_id));
+      result:=public.enviar_servicos_motorista(mixed,plan);
+      IF result->>'sucesso' IS DISTINCT FROM 'true' THEN RAISE EXCEPTION 'Mixed dispatch: %',result; END IF;
+      PERFORM pg_temp.check_result(result->>'sucesso'='true' AND result->>'nova_rota_id' IS NOT NULL AND (SELECT rota_id=live FROM public.entregas WHERE codigo_rastreio='MIXED-COLLECTION') AND (SELECT rota_id<>live AND ordem_na_rota=1 FROM public.entregas WHERE codigo_rastreio='MIXED-DELIVERY'),'mixed dispatch separates collection into active route and delivery into new route');
+      PERFORM pg_temp.check_result(NOT has_function_privilege('anon','public.enviar_servicos_motorista(jsonb,jsonb)','EXECUTE') AND NOT has_table_privilege('authenticated','public.operacoes_envio_motorista','INSERT'),'anonymous RPC and direct journal writes blocked');
+    END;
 END $tests$;
 SELECT count(*)::int AS passed, array_agg(name ORDER BY name) AS cases FROM regression_results;
 ROLLBACK;

@@ -257,6 +257,7 @@ export interface Database {
           rota_id: string | null
           ordem_na_rota: number | null
           observacoes_gestor: string | null
+          chegada_em: string | null
           data_hora_entrega: string | null
           janela_inicio: string | null
           janela_fim: string | null
@@ -462,6 +463,7 @@ export interface Database {
           tempo_otimizado_minutos: number
           percentual_economia_km: number
           percentual_economia_tempo: number
+          configuracao_navegacao: Json
           metricas_fonte: string | null
           metricas_atualizadas_em: string | null
           ordem_paradas_json: Json
@@ -497,6 +499,8 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
+      enviar_servicos_motorista: {Args: {p_dados:Json;p_plano_coletas?:Json};Returns:Json}
+
       salvar_cliente_endereco: { Args: { p_dados: Json }; Returns: Json }
 
       obter_meu_status_acesso: {

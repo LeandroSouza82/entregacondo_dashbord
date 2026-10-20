@@ -42,7 +42,7 @@ interface RouteMapProps {
   } | null;
   otimizado?: boolean;
   showStartPoint?: boolean;
-  routeOrigins?: Record<string, { latitude?: number; longitude?: number; retornar_ao_inicio?: boolean }>;
+  routeOrigins?: Record<string, { latitude?: number; longitude?: number; origem_atual?: { lat?: number; lng?: number }; retornar_ao_inicio?: boolean }>;
   veiculosAtivos?: MotoristaVeiculoMapa[];
   onVeiculoClick?: (veiculo: MotoristaVeiculoMapa) => void;
 }
@@ -101,9 +101,12 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   const [routeGeoJson, setRouteGeoJson] = useState<Feature<MultiLineString> | null>(null);
   const [roadError, setRoadError] = useState<string | null>(null);
   const plannedOrigins = Object.entries(routeOrigins || {}).flatMap(([id, origin]) => {
-    const { latitude, longitude } = origin;
+    const latitude = origin.origem_atual?.lat ?? origin.latitude;
+    const longitude = origin.origem_atual?.lng ?? origin.longitude;
+    const returnCoordinates: RoadCoordinate | undefined = typeof origin.latitude === 'number' && typeof origin.longitude === 'number'
+      ? [origin.longitude, origin.latitude] : undefined;
     return typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
-      ? [{ id, coordinates: [longitude, latitude] as RoadCoordinate, roundTrip: origin.retornar_ao_inicio === true }] : [];
+      ? [{ id, coordinates: [longitude, latitude] as RoadCoordinate, returnCoordinates, roundTrip: origin.retornar_ao_inicio === true }] : [];
   });
   const groups: Record<string, RoadCoordinate[]> = {};
   for (const parada of paradas) {
@@ -113,7 +116,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   for (const origin of plannedOrigins) {
     if (!groups[origin.id]?.length) continue;
     groups[origin.id].unshift(origin.coordinates);
-    if (origin.roundTrip) groups[origin.id].push(origin.coordinates);
+    if (origin.roundTrip && origin.returnCoordinates) groups[origin.id].push(origin.returnCoordinates);
   }
   const geometryKey = JSON.stringify(showStartPoint
     ? [[[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat], ...paradas.map(p => [p.coordenadas.lng, p.coordenadas.lat]), ...(pontoPreview ? [[pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]] : [])]]

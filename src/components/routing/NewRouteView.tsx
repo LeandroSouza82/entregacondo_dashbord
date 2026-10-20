@@ -1,3 +1,4 @@
+import { dispatchDriverServices } from '../../features/routes/services/dispatchDriverServices';
 import { estimateServiceTimes, type ServiceSample } from '../../features/routes/services/serviceTimeEstimates';
 import { fetchRoadPlan, type RoadCoordinate } from '../../features/routes/services/roadGeometry';
 import { requireCompanyId } from '../../lib/company';
@@ -593,12 +594,8 @@ export const NewRouteView: React.FC = () => {
     if (isSupabaseConfigured) {
       setDespachando(true);
       try {
-        if (!verifiedTotals || selectedKm <= 0 || selectedMin <= 0) {
-          setMensagemErro('Tempo e distância pelas ruas indisponíveis. Aguarde o cálculo ou tente novamente; o rascunho foi preservado.');
-          return;
-        }
         const payloadDespacho = {
-          metricas_fonte: 'mapbox_directions_planejamento',
+          metricas_fonte: verifiedTotals && selectedKm>0 && selectedMin>0 ? 'mapbox_directions_planejamento' : null,
           idempotency_key: despachoKey.current,
           empresa_id: empresaId,
           motorista_id: motoristaSelecionado.id,
@@ -645,33 +642,22 @@ export const NewRouteView: React.FC = () => {
           }))
         };
 
-        const { data, error } = await supabase.rpc('despachar_rota_transacional', {
-          p_dados: payloadDespacho as any,
-        });
-
-        if (error) {
-          console.warn('Erro ao executar RPC despachar_rota_transacional:', error);
-          setMensagemErro(`Falha transacional ao despachar rota: ${error.message}. As paradas foram mantidas no painel.`);
-          setTimeout(() => setMensagemErro(null), 8000);
-          return;
-        }
-
-        const resp = data as any;
+        const resp = await dispatchDriverServices(supabase, payloadDespacho, [pontoPartida.coordenadas.lng,pontoPartida.coordenadas.lat], import.meta.env.VITE_MAPBOX_TOKEN || '');
         if (!resp || resp.sucesso !== true) {
           setMensagemErro(`Erro no despacho da rota: ${resp?.mensagem || 'Falha no banco de dados'}.`);
           setTimeout(() => setMensagemErro(null), 8000);
           return;
         }
 
-        setMensagemSucesso(`Rota inteligente com ${entregasDaRota.length} paradas gravada com sucesso no Supabase e despachada para ${motoristaSelecionado.nome}!`);
-        setDespachoEnviado(`Rota enviada com sucesso para ${motoristaSelecionado.nome}!`);
+        setMensagemSucesso(resp.mensagem);
+        setDespachoEnviado(resp.mensagem);
         setTimeout(() => setDespachoEnviado(null), 6000);
         limparRascunhoRota();
         setEntregasDaRota([]);
         despachoKey.current = crypto.randomUUID();
 
         // Salva cache de última rota despachada para sincronizar instantaneamente com a Visão Geral
-        if (typeof window !== 'undefined' && window.localStorage) {
+        if (!resp.coletas_adicionadas && typeof window !== 'undefined' && window.localStorage) {
           window.localStorage.setItem('ec_last_dispatched_route', JSON.stringify({
             pontoPartida,
             paradas: paradasParaOMapa,
@@ -684,7 +670,7 @@ export const NewRouteView: React.FC = () => {
         setTimeout(() => setMensagemSucesso(null), 6000);
       } catch (err: unknown) {
         console.error('Erro de conexão ao despachar rota:', err);
-        setMensagemErro('Erro de conexão ao despachar rota para o servidor. O rascunho foi mantido intacto.');
+        setMensagemErro(err instanceof Error ? err.message : 'Não foi possível confirmar o envio. O rascunho foi mantido intacto.');
         setTimeout(() => setMensagemErro(null), 8000);
         return;
       } finally { setDespachando(false); }
@@ -703,7 +689,7 @@ export const NewRouteView: React.FC = () => {
             Nova rota de entregas
           </h1>
           <p className="text-[#516074] text-sm mt-1">
-            Cadastre as entregas, escolha o motorista e deixe o sistema montar a melhor rota.
+            Coletas entram na rota em andamento. Entregas e outros serviços seguem em uma nova rota.
           </p>
         </div>
 
@@ -1493,7 +1479,7 @@ export const NewRouteView: React.FC = () => {
               className="h-12 rounded-[10px] bg-[#C2410C] hover:bg-[#9A3412] active:scale-98 text-white font-bold text-[15px] transition-all shadow-md shadow-[#C2410C]/25 flex items-center justify-center gap-2 cursor-pointer"
             >
               <Send className="w-4 h-4" />
-              <span>Enviar rota para {motoristaSelecionado?.nome.split(' ')[0] || 'o motorista'}</span>
+              <span>Enviar serviços para {motoristaSelecionado?.nome.split(' ')[0] || 'o motorista'}</span>
             </button>
 
             <button
