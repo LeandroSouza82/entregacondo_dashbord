@@ -1,3 +1,4 @@
+DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF; END $$;
 -- Somente para testes isolados: contratos mínimos de auth e Storage.
 -- Não simula GoTrue, PostgREST, arquivos binários ou a API HTTP do Storage.
 DO $$ BEGIN

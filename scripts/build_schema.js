@@ -46,6 +46,7 @@ const FILE_ORDER = [
   path.join(FUNCTIONS_DIR, 'concluir_atendimento_entrega.sql'),
   path.join(FUNCTIONS_DIR, 'atualizar_localizacao_motorista.sql'),
   path.join(FUNCTIONS_DIR, 'enviar_servicos_motorista.sql'),
+  path.join(MODULES_DIR, '08_push_notifications.sql'),
   path.join(FUNCTIONS_DIR, 'obter_meu_status_acesso.sql'),
   path.join(FUNCTIONS_DIR, 'sincronizar_meu_perfil.sql'),
   path.join(FUNCTIONS_DIR, 'salvar_cliente_endereco.sql'),
