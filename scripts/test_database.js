@@ -46,7 +46,7 @@ try {
    console.log(name+': '+summary.rows[0].passed+' regressões SQL passaram.');
  }
 
- const names=[...new Set(fs.readdirSync(path.join(root,'supabase/functions-sql')).filter(f=>f.endsWith('.sql')).map(f=>f.slice(0,-4)).concat(['fn_usuario_e_gestor_empresa','fn_usuario_e_admin_empresa','fn_motorista_id_do_usuario']))];
+ const names=[...new Set(fs.readdirSync(path.join(root,'supabase/functions-sql')).filter(f=>f.endsWith('.sql')).map(f=>f.slice(0,-4)).concat(['atualizar_meu_nome_motorista','fn_usuario_e_gestor_empresa','fn_usuario_e_admin_empresa','fn_motorista_id_do_usuario']))];
  const catalog=await compareLiveCatalogs(databases.get('ec_fresh'),databases.get('ec_upgrade'),names);
  console.log('Catálogos reais equivalentes: '+catalog.functions+' funções, '+catalog.policies+' políticas, '+catalog.constraints+' constraints da fila.');
  for(const name of ['ec_fresh','ec_upgrade']){

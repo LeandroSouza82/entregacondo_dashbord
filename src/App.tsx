@@ -1,3 +1,4 @@
+import { ReceiptsView } from './components/dashboard/ReceiptsView';
 import { useState } from 'react';
 import { DashboardLayout } from './components/layout/DashboardLayout';
 import type { ActiveTab } from './components/layout/Sidebar';
@@ -6,7 +7,7 @@ import { RouteOptimizerView } from './components/routing/RouteOptimizerView';
 import { NewRouteView } from './components/routing/NewRouteView';
 import { DriverApprovalsView } from './components/drivers/DriverApprovalsView';
 import { AuthGate } from './components/AuthGate';
-import { History as HistoryIcon, Settings as SettingsIcon } from 'lucide-react';
+import { Settings as SettingsIcon } from 'lucide-react';
 import { CompanyRecords } from './components/CompanyRecords';
 
 export function App() {
@@ -46,22 +47,8 @@ export function App() {
 
       {activeTab === 'condos' && <CompanyRecords table="clientes_enderecos" title="Clientes e endereços" />}
 
-      {activeTab === 'history' && (
-        <div className="bg-white rounded-2xl p-8 border border-slate-200/90 shadow-card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-slate-800 text-white flex items-center justify-center">
-              <HistoryIcon className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-xl font-extrabold text-navy-900">Auditoria & Histórico Logístico</h2>
-              <p className="text-xs text-slate-500">Métricas acumuladas de economia e relatórios de tempo</p>
-            </div>
-          </div>
-          <p className="text-sm text-slate-600">
-            Registros completos das rotas calculadas e atendimentos concluídos no Supabase.
-          </p>
-        </div>
-      )}
+      {activeTab === 'proofs' && <ReceiptsView />}
+      {activeTab === 'history' && <ReceiptsView title="Histórico de atendimentos" />}
 
       {activeTab === 'settings' && (
         <div className="bg-white rounded-2xl p-8 border border-slate-200/90 shadow-card max-w-3xl">

@@ -1,0 +1,13 @@
+# Referências e perfil operacional — 20/10/2026
+
+As oito referências enviadas orientam o aplicativo e as duas telas principais do dashboard. A visão geral reúne cinco indicadores, mapa com filtro de motorista, progresso da frota e tabela com filtro de status e busca. O planejamento mantém seleção, sequência, origem, otimização, estimativas viárias verificadas e cobertura de tempo real por endereço. Comprovantes e histórico do gestor exibem recebedor, duração e links assinados de imagens privadas.
+
+No navegador autenticado foram conferidos os seis registros da empresa: quatro concluídos, um em rota e uma ocorrência. O filtro isolou a ocorrência. Nova rota carregou o motorista real; nenhum despacho de teste foi enviado. Comprovantes carregaram cinco registros, seus recebedores e durações, inclusive um atendimento longo de teste registrado pelo próprio usuário; esses tempos não foram corrigidos artificialmente.
+
+A migração 20261019215336 foi aplicada somente em vblwuvhdqgzdjnoscyqo para localização optativa e edição de nome. O aplicativo só publica GPS com ativação do motorista e rota em execução, usando notificação do Android. RPC valida proprietário da rota e coordenadas. Distância acumulada não diminui. Política SELECT restritiva impede que regras permissivas antigas revelem a posição a terceiros. Escrita direta de motoristas e aprovação de membros foram revogadas; RPCs existentes continuam operacionais. Verificação remota de usuário autorizado, leitura indevida, coordenadas inválidas e distância monotônica passou com ROLLBACK integral.
+
+O módulo/migração de endereços foi alinhado para instalação nova e atualização: compatibilidade com colunas legadas opcionais, view security_invoker e concessões da RPC iguais. Esse ajuste da migração antiga foi validado localmente; ela não foi reaplicada indiscriminadamente em produção.
+
+Verificações: build TypeScript/Vite; equivalência SQL e seis contraprovas; PostgreSQL 17 temporário com 85 regressões por instalação, catálogos equivalentes (35 funções, 22 políticas), cinco cenários concorrentes por instalação e três testes de preservação; duas verificações de tempo real por endereço e quatro de métricas viárias. Aviso de tamanho do bundle permanece. A comparação de layout usa desktop e o tamanho reduzido do painel do navegador.
+
+Há avisos legados do Security Advisor fora do escopo de GPS/comprovantes. Não considerar este trabalho uma certificação de segurança de todo o projeto. Não foram feitos merge na main nem publicação web. Outras edições locais de login, busca e ícones foram preservadas e não devem ser incluídas automaticamente no commit desta rodada.

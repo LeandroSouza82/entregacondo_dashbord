@@ -96,3 +96,8 @@ CREATE TABLE IF NOT EXISTS public.historico_atendimentos (
     motivo_falha TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS place_id VARCHAR(255);
+CREATE OR REPLACE VIEW public.saved_addresses WITH (security_invoker=true) AS
+SELECT id,empresa_id,nome_identificador AS label,endereco_completo AS full_address,latitude AS lat,longitude AS lng,place_id,created_at FROM public.clientes_enderecos;
+GRANT SELECT ON public.saved_addresses TO authenticated;

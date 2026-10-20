@@ -55,7 +55,7 @@ function extrairPerfil(user: any): UserProfile {
   };
 }
 
-export type ActiveTab = 'overview' | 'new_route' | 'routing' | 'deliveries' | 'drivers' | 'approvals' | 'condos' | 'history' | 'settings';
+export type ActiveTab = 'overview' | 'new_route' | 'routing' | 'deliveries' | 'drivers' | 'approvals' | 'condos' | 'history' | 'settings' | 'proofs';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -107,14 +107,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
     },
     {
       id: 'new_route' as ActiveTab,
-      label: 'Nova rota de entregas',
+      label: 'Nova entrega',
       icon: Route,
       badge: null,
       highlight: true,
     },
     {
       id: 'routing' as ActiveTab,
-      label: 'Comparador de Rotas',
+      label: 'Rotas',
       icon: Route,
       badge: null,
       highlight: false,
@@ -144,6 +144,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
       icon: Building2,
       badge: null,
     },
+    {id:'proofs' as ActiveTab, label:'Comprovantes', icon:PackageCheck, badge:null},
     {
       id: 'history' as ActiveTab,
       label: 'Relatórios & Histórico',
@@ -153,10 +154,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
   ];
 
   return (
-    <aside className="w-64 bg-navy-800 text-slate-200 flex flex-col flex-shrink-0 border-r border-navy-700/70 select-none h-screen sticky top-0 z-30 transition-all">
+    <aside className="w-[248px] bg-[#0F1B2D] text-slate-200 flex flex-col flex-shrink-0 border-r border-navy-700/70 select-none h-screen sticky top-0 z-30 transition-all">
       {/* Brand Header */}
       <div className="h-20 flex items-center px-6 border-b border-navy-700/60 bg-navy-850/60 backdrop-blur">
-        <BrandLogo size="md" theme="dark" subtitle="Gestão Logística Pro" />
+        <BrandLogo size="md" theme="dark" subtitle="Painel do gestor" />
       </div>
 
       {/* Main Navigation */}
@@ -175,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
               onClick={() => onTabChange(item.id)}
               className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-medium transition-all group duration-150 ${
                 isActive
-                  ? 'bg-gradient-to-r from-terracotta-600 to-terracotta-500 text-white shadow-md shadow-terracotta-600/25 font-semibold'
+                  ? 'bg-white/10 text-white font-semibold'
                   : 'text-slate-300 hover:text-white hover:bg-navy-700/60'
               }`}
             >

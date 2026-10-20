@@ -1,6 +1,6 @@
-import React from 'react';
-import { Sidebar, type ActiveTab } from './Sidebar';
-import { Header } from './Header';
+import React from "react";
+import { Sidebar, type ActiveTab } from "./Sidebar";
+import { Header } from "./Header";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -22,16 +22,14 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <Header 
-          onOpenNewDelivery={onOpenNewDelivery}
-          onOpenOptimizer={() => onTabChange('routing')}
-          driversActiveCount={3}
-          driversInRouteCount={2}
-        />
-        
-        <main className="flex-1 p-8 overflow-y-auto">
-          {children}
-        </main>
+        {activeTab !== "overview" && activeTab !== "new_route" && (
+          <Header
+            onOpenNewDelivery={onOpenNewDelivery}
+            onOpenOptimizer={() => onTabChange("routing")}
+          />
+        )}
+
+        <main className="flex-1 p-4 md:p-8 overflow-y-auto">{children}</main>
       </div>
     </div>
   );

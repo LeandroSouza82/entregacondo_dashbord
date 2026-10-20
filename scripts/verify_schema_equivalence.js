@@ -738,10 +738,9 @@ export function runSelfTest() {
   }
 
   // Contraprova 5: Alteração dos papéis da política (TO authenticated alterado para TO anon)
-  const cp5Sql = baseSql.replace(
-    'TO authenticated',
-    'TO anon'
-  );
+  const policyOffset = baseSql.indexOf('CREATE POLICY "Leitura de motoristas autorizada"');
+  if (policyOffset < 0) throw new Error('Política alvo da contraprova ausente.');
+  const cp5Sql = baseSql.slice(0,policyOffset) + baseSql.slice(policyOffset).replace('TO authenticated','TO anon');
   const res5 = compareSqlStructures('base', baseSql, 'cp5', cp5Sql, ['anexar_documento_veiculo']);
   if (res5.sucesso) {
     console.error('❌ FALHA NA CONTRAPROVA 5: O comparador não detectou alteração dos papéis da política!');

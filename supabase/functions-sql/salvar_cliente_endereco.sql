@@ -1,9 +1,3 @@
--- ==============================================================================
--- FUNÇÃO SQL: salvar_cliente_endereco.sql
--- Cadastro e atualização resiliente de clientes, condomínios e endereços salvos.
--- Aceita variações de chaves do frontend e valida isolamento empresarial de gestão.
--- ==============================================================================
-
 CREATE OR REPLACE FUNCTION public.salvar_cliente_endereco(p_dados JSONB)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -18,6 +12,7 @@ DECLARE
     v_complemento TEXT;
     v_lat NUMERIC;
     v_lng NUMERIC;
+    v_place_id TEXT;
     v_tempo_medio INT;
     v_id UUID;
     v_registro public.clientes_enderecos%ROWTYPE;
@@ -43,20 +38,23 @@ BEGIN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'ACESSO_NEGADO', 'mensagem', 'Acesso de gestão obrigatório nesta empresa.');
     END IF;
 
-    -- 2. Extrai o nome aceitando qualquer variação enviada pelo frontend
+    -- 2. Extrai o nome/label aceitando qualquer variação enviada pelo frontend
     v_nome := TRIM(COALESCE(
         p_dados->>'nome_identificador',
+        p_dados->>'label',
         p_dados->>'nome',
         p_dados->>'nome_cliente',
         p_dados->>'cliente_nome',
         p_dados->>'condominio',
         p_dados->>'destinatario_padrao',
+        split_part(p_dados->>'full_address', ',', 1),
         split_part(p_dados->>'endereco_completo', ',', 1),
         split_part(p_dados->>'endereco', ',', 1)
     ));
 
     -- 3. Extrai o endereço aceitando variações
     v_endereco := TRIM(COALESCE(
+        p_dados->>'full_address',
         p_dados->>'endereco_completo',
         p_dados->>'endereco',
         p_dados->>'logradouro'
@@ -77,6 +75,8 @@ BEGIN
         v_lat := -27.5954;
         v_lng := -48.5480;
     END IF;
+
+    v_place_id := NULLIF(TRIM(COALESCE(p_dados->>'place_id', p_dados->>'placeId')), '');
 
     v_tempo_medio := COALESCE(
         (p_dados->>'tempo_medio_minutos')::INT,
@@ -105,6 +105,7 @@ BEGIN
             endereco_completo = v_endereco,
             latitude = v_lat,
             longitude = v_lng,
+            place_id = COALESCE(v_place_id, place_id),
             tempo_medio_minutos = v_tempo_medio,
             observacoes_acesso = COALESCE(v_complemento, observacoes_acesso),
             updated_at = timezone('utc'::text, now())
@@ -124,6 +125,7 @@ BEGIN
             SET 
                 latitude = v_lat,
                 longitude = v_lng,
+                place_id = COALESCE(v_place_id, place_id),
                 tempo_medio_minutos = v_tempo_medio,
                 observacoes_acesso = COALESCE(v_complemento, observacoes_acesso),
                 updated_at = timezone('utc'::text, now())
@@ -141,14 +143,17 @@ BEGIN
                 cep,
                 latitude,
                 longitude,
+                place_id,
                 tempo_medio_minutos,
+                total_entregas_realizadas,
                 tipo_local,
-                observacoes_acesso
-            )
-            VALUES (
+                observacoes_acesso,
+                created_at,
+                updated_at
+            ) VALUES (
                 v_empresa_id,
                 v_nome,
-                NULLIF(TRIM(p_dados->>'destinatario_padrao'), ''),
+                p_dados->>'destinatario_padrao',
                 v_endereco,
                 COALESCE(p_dados->>'numero', ''),
                 COALESCE(p_dados->>'bairro', ''),
@@ -156,26 +161,28 @@ BEGIN
                 COALESCE(p_dados->>'cep', '88000-000'),
                 v_lat,
                 v_lng,
+                v_place_id,
                 v_tempo_medio,
+                0,
                 COALESCE(p_dados->>'tipo_local', 'condominio_horizontal'),
-                v_complemento
+                v_complemento,
+                timezone('utc'::text, now()),
+                timezone('utc'::text, now())
             )
             RETURNING * INTO v_registro;
         END IF;
     END IF;
 
-    -- Retorna tanto em formato direto de registro quanto no encapsulamento canônico
     RETURN to_jsonb(v_registro) || jsonb_build_object(
-        'sucesso', TRUE,
-        'id', v_registro.id,
-        'nome', v_registro.nome_identificador,
-        'nome_identificador', v_registro.nome_identificador,
-        'endereco', v_registro.endereco_completo,
-        'endereco_completo', v_registro.endereco_completo,
-        'cliente', to_jsonb(v_registro)
+        'id',v_registro.id,
+        'nome',v_registro.nome_identificador,
+        'endereco',v_registro.endereco_completo,
+        'sucesso', true,
+        'mensagem', 'Endereço salvo com sucesso no banco de dados.',
+        'cliente', row_to_json(v_registro)
     );
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.salvar_cliente_endereco(JSONB) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.salvar_cliente_endereco(JSONB) TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.salvar_cliente_endereco(jsonb) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.salvar_cliente_endereco(jsonb) TO authenticated;

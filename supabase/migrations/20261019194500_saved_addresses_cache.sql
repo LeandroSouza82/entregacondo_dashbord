@@ -6,8 +6,10 @@
 
 -- 1. Garante que a coluna place_id exista na tabela de endereços salvos
 ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS place_id VARCHAR(255);
-ALTER TABLE public.clientes_enderecos ALTER COLUMN nome DROP NOT NULL;
-ALTER TABLE public.clientes_enderecos ALTER COLUMN endereco DROP NOT NULL;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='clientes_enderecos' AND column_name='nome') THEN ALTER TABLE public.clientes_enderecos ALTER COLUMN nome DROP NOT NULL; END IF;
+ IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='clientes_enderecos' AND column_name='endereco') THEN ALTER TABLE public.clientes_enderecos ALTER COLUMN endereco DROP NOT NULL; END IF;
+END $$;
 ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS destinatario_padrao VARCHAR(255);
 ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS numero VARCHAR(50) DEFAULT '';
 ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS bairro VARCHAR(100) DEFAULT '';
@@ -20,7 +22,7 @@ ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS observacoes_acess
 ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now());
 
 -- 2. Cria ou atualiza a view de compatibilidade saved_addresses
-CREATE OR REPLACE VIEW public.saved_addresses AS
+CREATE OR REPLACE VIEW public.saved_addresses WITH (security_invoker=true) AS
 SELECT 
     id,
     empresa_id,
@@ -211,10 +213,16 @@ BEGIN
         END IF;
     END IF;
 
-    RETURN jsonb_build_object(
+    RETURN to_jsonb(v_registro) || jsonb_build_object(
+        'id',v_registro.id,
+        'nome',v_registro.nome_identificador,
+        'endereco',v_registro.endereco_completo,
         'sucesso', true,
         'mensagem', 'Endereço salvo com sucesso no banco de dados.',
         'cliente', row_to_json(v_registro)
     );
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.salvar_cliente_endereco(jsonb) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.salvar_cliente_endereco(jsonb) TO authenticated;

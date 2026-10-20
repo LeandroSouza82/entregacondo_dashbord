@@ -19,3 +19,25 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.atualizar_localizacao_motorista(uuid,double precision,double precision,numeric) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.atualizar_localizacao_motorista(uuid,double precision,double precision,numeric) TO authenticated;
+
+-- Restrictive policy also constrains permissive policies left by older installations.
+ALTER TABLE public.motoristas ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Localizacao restrita a gestao ou proprio condutor" ON public.motoristas;
+CREATE POLICY "Localizacao restrita a gestao ou proprio condutor" ON public.motoristas AS RESTRICTIVE FOR SELECT TO authenticated
+USING (public.fn_usuario_e_gestor_empresa(empresa_id,auth.uid()) OR (user_id=auth.uid() AND public.fn_usuario_pode_operar_motorista(empresa_id,id)));
+REVOKE ALL ON public.motoristas FROM anon;
+REVOKE INSERT,UPDATE,DELETE ON public.motoristas FROM authenticated;
+-- Membership approval stays behind the existing audited management RPCs.
+REVOKE INSERT,UPDATE,DELETE ON public.empresa_membros FROM anon,authenticated;
+CREATE OR REPLACE FUNCTION public.atualizar_meu_nome_motorista(p_nome text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE uid uuid:=auth.uid(); n text:=btrim(p_nome);
+BEGIN
+ IF uid IS NULL OR n IS NULL OR length(n)<2 OR length(n)>100 THEN RETURN jsonb_build_object('sucesso',false,'mensagem','Informe um nome entre 2 e 100 caracteres.'); END IF;
+ UPDATE public.motoristas m SET nome=n WHERE m.user_id=uid AND public.fn_usuario_pode_operar_motorista(m.empresa_id,m.id);
+ IF NOT FOUND THEN RETURN jsonb_build_object('sucesso',false,'mensagem','Motorista autorizado não encontrado.'); END IF;
+ UPDATE public.perfis_usuarios SET nome=n WHERE id=uid;
+ RETURN jsonb_build_object('sucesso',true);
+END $$;
+REVOKE ALL ON FUNCTION public.atualizar_meu_nome_motorista(text) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.atualizar_meu_nome_motorista(text) TO authenticated;

@@ -288,7 +288,7 @@ export interface Database {
           updated_at?: string
         }
         Update: Partial<Database['public']['Tables']['entregas']['Insert']>
-        Relationships: []
+        Relationships: [{ foreignKeyName: 'entregas_cliente_endereco_id_fkey'; columns: ['cliente_endereco_id']; isOneToOne: false; referencedRelation: 'clientes_enderecos'; referencedColumns: ['id'] }]
       }
       veiculos_motoristas: {
         Row: {

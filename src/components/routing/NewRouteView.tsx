@@ -762,7 +762,7 @@ export const NewRouteView: React.FC = () => {
               <h2 className="text-[17px] font-extrabold text-[#0F1B2D] m-0">Motorista</h2>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {MOTORISTAS.map((m) => {
                 const isSelected = motoristaAtivo === m.id;
                 return (
@@ -1304,7 +1304,7 @@ export const NewRouteView: React.FC = () => {
         </div>
 
         {/* Coluna Direita: Seções 4 e 5 (Rota Inteligente, Mapa e Despacho) */}
-        <div className="w-full lg:w-[38%] space-y-6 sticky top-24">
+        <div className="w-full lg:w-[38%] space-y-6 sticky top-6">
           
           {/* SEÇÃO 4: ROTA INTELIGENTE & MAPA */}
           <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex flex-col gap-4">
