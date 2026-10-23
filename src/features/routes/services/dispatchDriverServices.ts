@@ -24,6 +24,19 @@ export interface DispatchResult {
   rota_ativa_id?: string | null;
   idempotente?: boolean;
 }
+/** New workflow: offer the entire batch; acceptance and pickup are driver decisions. */
+export async function dispatchDriverOrders(
+  client: SupabaseClient<Database>, payload: DispatchPayload,
+): Promise<DispatchResult> {
+  if (payload.paradas.some(p=>p.janela_data || p.coleta_origem_id)) {
+    const capabilities=await client.rpc('obter_capacidades_rotas');
+    if (capabilities.error || (capabilities.data as {regras_opcionais?:number})?.regras_opcionais!==1)
+      throw new Error('Este ambiente ainda não recebeu a atualização de horários e coletas vinculadas. Os pedidos continuam no rascunho.');
+  }
+  const { data, error } = await client.rpc('enviar_pedidos_motorista', { p_dados: payload as unknown as Json });
+  if (error) throw new Error('Não foi possível enviar os pedidos. O rascunho foi preservado.');
+  return data as unknown as DispatchResult;
+}
 export async function dispatchDriverServices(
   client: SupabaseClient<Database>,
   payload: DispatchPayload,

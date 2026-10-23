@@ -15,7 +15,7 @@ export function DriversPanel({
   onAssign?: () => void;
 }) {
   return (
-    <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 h-full">
+    <section className="bg-white border border-gray-300 rounded-2xl p-5 h-full">
       <div className="flex items-center justify-between gap-3 mb-4">
         <h2 className="font-extrabold text-lg">Motoristas</h2>
         <button onClick={onAssign} className="text-blue-700 text-sm font-bold">

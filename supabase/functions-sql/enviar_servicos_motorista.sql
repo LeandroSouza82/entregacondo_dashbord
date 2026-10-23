@@ -33,6 +33,10 @@ BEGIN
  OR jsonb_typeof(p_dados->'paradas') IS DISTINCT FROM 'array' OR jsonb_array_length(p_dados->'paradas') NOT BETWEEN 1 AND 500 THEN
   RETURN jsonb_build_object('sucesso',false,'codigo','DADOS_INVALIDOS','mensagem','Informe motorista, chave de envio e de 1 a 500 paradas.');
  END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(p_dados->'paradas') p WHERE
+   NULLIF(p->>'janela_data','') IS NOT NULL OR NULLIF(p->>'coleta_origem_id','') IS NOT NULL) THEN
+  RETURN jsonb_build_object('sucesso',false,'codigo','USE_ENVIO_PEDIDOS','mensagem','Envie pedidos com condições pelo fluxo de aceite do motorista.');
+ END IF;
  -- Same request is serialized before checking its journal. Hash excludes volatile route/GPS metrics.
  PERFORM pg_advisory_xact_lock(hashtextextended(company::text||':envio:'||request_key,0));
  PERFORM pg_advisory_xact_lock(hashtextextended(company::text||':'||driver::text,0));

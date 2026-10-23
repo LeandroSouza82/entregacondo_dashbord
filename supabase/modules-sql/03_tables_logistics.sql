@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS public.clientes_enderecos (
     empresa_id UUID NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
     nome_identificador VARCHAR(255) NOT NULL,
     destinatario_padrao VARCHAR(255),
+    whatsapp_cliente VARCHAR(30),
     endereco_completo TEXT NOT NULL,
     numero VARCHAR(50) NOT NULL,
     bairro VARCHAR(100) NOT NULL,
@@ -100,4 +101,5 @@ CREATE TABLE IF NOT EXISTS public.historico_atendimentos (
 ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS place_id VARCHAR(255);
 CREATE OR REPLACE VIEW public.saved_addresses WITH (security_invoker=true) AS
 SELECT id,empresa_id,nome_identificador AS label,endereco_completo AS full_address,latitude AS lat,longitude AS lng,place_id,created_at FROM public.clientes_enderecos;
+REVOKE ALL ON public.saved_addresses FROM anon;
 GRANT SELECT ON public.saved_addresses TO authenticated;

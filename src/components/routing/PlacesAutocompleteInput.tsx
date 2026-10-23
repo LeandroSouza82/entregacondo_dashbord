@@ -1,3 +1,4 @@
+import { coordenadasValidas, erroLocalizacaoEndereco } from '../../features/routes/services/addressCoordinates';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MapPin, Building, Loader2, Sparkles, Search, Globe, Bookmark, Check } from 'lucide-react';
 import type { PontoCoordenada } from '../../types/logistics';
@@ -14,7 +15,7 @@ import {
 } from '../../features/routes/services/savedAddressesService';
 import { geocodificarEndereco } from '../../features/routes/services/routeOptimization';
 
-const GOOGLE_PLACES_KEY = import.meta.env.VITE_GOOGLE_PLACES_KEY || '';
+const GOOGLE_PLACES_KEY = '';
 
 export interface EnderecoSalvoItem {
   endereco: string;
@@ -69,6 +70,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
   const debounceTimerRef = useRef<number | null>(null);
   const sessionTokenRef = useRef<string>(crypto.randomUUID());
   const lastSelectedPlaceIdRef = useRef<string | null>(null);
+  const selectionRevisionRef = useRef(0);
   const internalCoordsRef = useRef<PontoCoordenada | null>(null);
 
   const [isOpen, setIsOpen] = useState<boolean>(false);
@@ -103,12 +105,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
       verificarEnderecoJaSalvo(value, empresaId).then(salvo => {
         if (active) {
           setIsAlreadySaved(Boolean(salvo));
-          if (salvo?.latitude && salvo?.longitude) {
-            internalCoordsRef.current = {
-              lat: Number(salvo.latitude),
-              lng: Number(salvo.longitude),
-            };
-          }
+
         }
       }).catch(() => {});
       return () => { active = false; };
@@ -117,13 +114,11 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
 
   // Sincroniza coordenadas passadas externamente
   useEffect(() => {
-    if (coordenadas) {
-      internalCoordsRef.current = coordenadas;
-    }
+    internalCoordsRef.current = coordenadas ?? null;
   }, [coordenadas]);
 
   // Busca resiliente: tenta Google Places e faz fallback para Nominatim se Google falhar ou esgotar cota
-  const fetchGooglePredictions = useCallback(async (query: string) => {
+  const fetchGooglePredictions = useCallback(async (query: string, revision: number) => {
     if (!query.trim() || query.length < 2) {
       setPredictions([]);
       return;
@@ -191,7 +186,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
 
     // CAMADA 3: Fallback Geocoding / Nominatim se o Google não tiver retornado resultados
     if (googleResults.length > 0) {
-      setPredictions(googleResults);
+      if (revision === selectionRevisionRef.current) setPredictions(googleResults);
     } else {
       try {
         const nomResults = await buscarSugestoesNominatim(query);
@@ -203,15 +198,22 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
           coordenadas: n.coordenadas,
           origem: 'nominatim',
         }));
-        setPredictions(mapped);
+        if (revision === selectionRevisionRef.current) setPredictions(mapped);
       } catch {
-        setPredictions([]);
+        if (revision === selectionRevisionRef.current) setPredictions([]);
       }
     }
   }, []);
 
   // PRIORIDADE AO BANCO: Busca primeiro na base do Supabase com ilike, economizando requisições do Google
   const handleInputChange = (novoValor: string) => {
+    const revision = ++selectionRevisionRef.current;
+    setPredictions([]);
+    setEnderecosDoBanco([]);
+    internalCoordsRef.current = null;
+    lastSelectedPlaceIdRef.current = null;
+    setErroSalvar(null);
+    setIsAlreadySaved(false);
     onChange(novoValor);
     setIsOpen(true);
 
@@ -225,6 +227,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
         try {
           // 1. PRIMEIRO: Consulta local no Supabase (zero chamadas de API externa)
           const doBanco = await buscarEnderecosNoBanco(novoValor, empresaId).catch(() => []);
+          if (revision !== selectionRevisionRef.current) return;
           setEnderecosDoBanco(doBanco || []);
 
           // Checa se algum item retornado tem correspondência exata
@@ -241,10 +244,10 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
             setPredictions([]);
           } else {
             // 2. SEGUNDO: Somente se não houver correspondência exata ou se usuário digitou além dos salvos
-            await fetchGooglePredictions(novoValor).catch(() => {});
+            await fetchGooglePredictions(novoValor, revision).catch(() => {});
           }
         } finally {
-          setIsLoading(false);
+          if (revision === selectionRevisionRef.current) setIsLoading(false);
         }
       }, 350);
     } else {
@@ -257,6 +260,8 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
 
   // Seleção de sugestão externa (Google Places ou Nominatim) -> Geocoding e preenchimento
   const handleSelectPrediction = async (item: PlacePredictionItem) => {
+    const revision = ++selectionRevisionRef.current;
+    setErroSalvar(null);
     onChange(item.fullText);
     setIsOpen(false);
     setIsLoading(true);
@@ -264,7 +269,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
 
     try {
       // Se a sugestão já tiver coordenadas (ex: proveniente do Nominatim), aplica imediatamente sem custo
-      if (item.coordenadas && typeof item.coordenadas.lat === 'number' && !isNaN(item.coordenadas.lat)) {
+      if (coordenadasValidas(item.coordenadas)) {
         internalCoordsRef.current = item.coordenadas;
         onAddressSelect({
           enderecoCompleto: item.fullText,
@@ -279,10 +284,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
       }
 
       // Se for Google Places, busca os detalhes com fallback
-      let coords: PontoCoordenada = {
-        lat: -27.5954,
-        lng: -48.5480,
-      };
+      let coords: PontoCoordenada | null = null;
 
       if (GOOGLE_PLACES_KEY && item.origem === 'google') {
         try {
@@ -307,6 +309,11 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
         if (geo?.coordenadas) coords = geo.coordenadas;
       }
 
+      if (revision !== selectionRevisionRef.current) return;
+      if (!coordenadasValidas(coords)) {
+        setErroSalvar(erroLocalizacaoEndereco);
+        return;
+      }
       const nomeLocal = item.mainText;
       const enderecoFinal = item.fullText;
       internalCoordsRef.current = coords;
@@ -326,38 +333,14 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
     } catch (err) {
       console.warn('Erro ao obter detalhes de coordenadas do local:', err);
     } finally {
-      setIsLoading(false);
+      if (revision === selectionRevisionRef.current) setIsLoading(false);
     }
-  };
-
-  // Tolerância a falhas: se o usuário digitou e clicou fora sem selecionar do dropdown
-  const handleInputBlur = () => {
-    setTimeout(async () => {
-      if (value.trim().length >= 4) {
-        try {
-          const salvo = await verificarEnderecoJaSalvo(value.trim(), empresaId);
-          if (salvo) {
-            setIsAlreadySaved(true);
-            return;
-          }
-          const geo = await geocodificarEndereco(value.trim());
-          if (geo && geo.coordenadas) {
-            internalCoordsRef.current = geo.coordenadas;
-            onAddressSelect({
-              enderecoCompleto: geo.endereco || value.trim(),
-              nomeLocal: geo.nome || value.trim().split(',')[0].trim(),
-              coordenadas: geo.coordenadas,
-            });
-          }
-        } catch (e) {
-          console.warn('Geocodificação silenciosa no blur:', e);
-        }
-      }
-    }, 250);
   };
 
   // Seleção direta de item vindo do banco: usa diretamente as coordenadas sem gastar API
   const handleSelectDoBanco = (item: ClienteEnderecoItem) => {
+    selectionRevisionRef.current++;
+    setErroSalvar(null);
     onChange(item.endereco_completo);
     setIsOpen(false);
     setIsAlreadySaved(true);
@@ -365,6 +348,10 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
       lat: Number(item.latitude),
       lng: Number(item.longitude),
     };
+    if (!coordenadasValidas(coords)) {
+      setErroSalvar(erroLocalizacaoEndereco);
+      return;
+    }
     internalCoordsRef.current = coords;
 
     onAddressSelect({
@@ -396,9 +383,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
         }
       }
 
-      if (!coords) {
-        coords = { lat: -27.5954, lng: -48.5480 };
-      }
+      if (!coordenadasValidas(coords)) throw new Error(erroLocalizacaoEndereco);
 
       if (!label) {
         label = enderecoLimpo.split(',')[0].trim() || 'Condomínio / Cliente';
@@ -449,7 +434,6 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
           value={value}
           onChange={(e) => handleInputChange(e.target.value)}
           onFocus={() => setIsOpen(true)}
-          onBlur={handleInputBlur}
           onKeyDown={async (e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -458,21 +442,8 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
               } else if (enderecosDoBanco.length > 0) {
                 handleSelectDoBanco(enderecosDoBanco[0]);
               } else if (value.trim().length >= 3) {
-                setIsLoading(true);
-                try {
-                  const geo = await geocodificarEndereco(value.trim());
-                  if (geo && geo.coordenadas) {
-                    onChange(geo.endereco);
-                    setIsOpen(false);
-                    onAddressSelect({
-                      enderecoCompleto: geo.endereco,
-                      nomeLocal: geo.nome,
-                      coordenadas: geo.coordenadas,
-                    });
-                  }
-                } finally {
-                  setIsLoading(false);
-                }
+                void handleSelectPrediction({ placeId: '', mainText: value.trim().split(',')[0],
+                  secondaryText: '', fullText: value.trim() });
               }
             }
           }}
@@ -533,7 +504,7 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
       </div>
 
       {erroSalvar && (
-        <p className="mt-1 text-xs font-semibold text-rose-600">Falha ao salvar: {erroSalvar}</p>
+        <p role="alert" className="mt-1 text-xs font-semibold text-rose-600">{erroSalvar}</p>
       )}
 
       {/* Dropdown Inteligente de Resultados */}
@@ -589,6 +560,12 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
                 <div
                   key={idx}
                   onClick={() => {
+                    selectionRevisionRef.current++;
+                    if (!coordenadasValidas(item.coordenadas)) {
+                      setErroSalvar(erroLocalizacaoEndereco);
+                      return;
+                    }
+                    internalCoordsRef.current = item.coordenadas;
                     onChange(item.endereco);
                     setIsOpen(false);
                     onAddressSelect({
@@ -658,25 +635,8 @@ export const PlacesAutocompleteInput: React.FC<PlacesAutocompleteInputProps> = (
           {/* CAMADA 4: CONFIRMAÇÃO DE ENDEREÇO DIGITADO (FALLBACK IMEDIATO SEM TRAVAR) */}
           {value.trim().length >= 3 && (
             <div
-              onClick={async () => {
-                setIsLoading(true);
-                try {
-                  const geo = await geocodificarEndereco(value.trim());
-                  const enderecoFinal = geo?.endereco || value.trim();
-                  const nomeLocal = geo?.nome || value.trim().split(',')[0].trim();
-                  const coordenadas = geo?.coordenadas || { lat: -27.5954, lng: -48.5480 };
-
-                  onChange(enderecoFinal);
-                  setIsOpen(false);
-                  onAddressSelect({
-                    enderecoCompleto: enderecoFinal,
-                    nomeLocal,
-                    coordenadas,
-                  });
-                } finally {
-                  setIsLoading(false);
-                }
-              }}
+              onClick={() => handleSelectPrediction({ placeId: '',
+                mainText: value.trim().split(',')[0], secondaryText: '', fullText: value.trim() })}
               className="flex items-center justify-between p-3 bg-blue-50/70 hover:bg-blue-100/80 text-[#1D4ED8] cursor-pointer transition-colors border-t border-blue-100"
             >
               <div className="flex items-center gap-2.5 min-w-0 flex-1">

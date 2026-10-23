@@ -1,0 +1,158 @@
+{
+  "date": "2026-10-23",
+  "supabase": {
+    "project": "vblwuvhdqgzdjnoscyqo",
+    "migrationVersion": "20261023160108",
+    "migrationName": "activate_customer_tracking_optional_routes_secure_receipts",
+    "sources": [
+      {
+        "name": "20261022153822_customer_arrival_tracking.sql",
+        "sha256": "13BE3DDD2218D5DEEEACD3A685F879F4A829DE9CEC4702D8D6E35B1B2BAD40F4"
+      },
+      {
+        "name": "20261023155732_release_legacy_compatibility.sql",
+        "sha256": "E7C3BFD97B3B327B62EEF6FB698F19348595E6A4848C64A16D4EC66B7DDDA645"
+      },
+      {
+        "name": "20261022195415_optional_route_windows_and_collections.sql",
+        "sha256": "E2315E4AC9EA2DE2EEB02125B3EBA0E01DE79A62DEC4DDC68B0F27ABFF534397"
+      },
+      {
+        "name": "20261022205137_secure_receipt_sharing.sql",
+        "sha256": "341258260527040EA262DDDAA6C58AA7B3A5E5EB9EC3F23F593325F9D3B4D47C"
+      },
+      {
+        "name": "20261023154302_harden_address_view_and_uuid_helper.sql",
+        "sha256": "C936BDF0AE6F46AD1CCFCC502949BD5660E0555F1B19B93E73838162B1AF1F65"
+      }
+    ],
+    "countsPreserved": {
+      "addresses": 49,
+      "stops": 31,
+      "routes": 18,
+      "receipts": 28
+    }
+  },
+  "vercel": {
+    "team": "team_EcQV3Ecj2tN7F2I1sSWREnU0",
+    "project": "prj_JOyDsbKVBDYaeabMCWPkGgAL6sfC",
+    "deployment": "dpl_4oAqQi6kVQvyj6vxVUaVW3DUPSXV",
+    "domain": "entregacondo.com.br",
+    "publicAlternative": "https://entregacondo-dashboard.vercel.app",
+    "files": [
+      {
+        "file": "app-logo.png",
+        "sha": "dac2e541dc35b50c2896404e9dd6669d4b2e7092",
+        "size": 127172
+      },
+      {
+        "file": "favicon.svg",
+        "sha": "601c0e3044bc899cc7f966dd3506f87b73fbd26c",
+        "size": 1384
+      },
+      {
+        "file": "icons.svg",
+        "sha": "f9897ac25e13de9ea601d2f1ac5d9353dfbefcda",
+        "size": 5031
+      },
+      {
+        "file": "index.html",
+        "sha": "1ea662aabe1a6c97da274624b7ed7138f644f9a7",
+        "size": 1075
+      },
+      {
+        "file": "login-bg.jpg",
+        "sha": "96b11438fefd62f694ad0b17468562ebf48604de",
+        "size": 122443
+      },
+      {
+        "file": "logo.png",
+        "sha": "dac2e541dc35b50c2896404e9dd6669d4b2e7092",
+        "size": 127172
+      },
+      {
+        "file": "assets/ArrivalTrackingMap-Bdh_bark.css",
+        "sha": "dfc18ff6cf887c23344708c7d025cb5451f77194",
+        "size": 48831
+      },
+      {
+        "file": "assets/ArrivalTrackingMap-lDZyQy_G.js",
+        "sha": "b1848a1ff551456873e84df7efc9a21f9b87b50f",
+        "size": 1283
+      },
+      {
+        "file": "assets/index-3zPhBUz5.js",
+        "sha": "5087aebd978f0af84f66b76034b4798c886a4905",
+        "size": 719598
+      },
+      {
+        "file": "assets/index-Dlq9aDLK.css",
+        "sha": "ecb66bd0daaee31f89b475b69afc4e059136d35b",
+        "size": 103197
+      },
+      {
+        "file": "assets/mapbox-gl-Bp7EjRcn.js",
+        "sha": "db1643f55cec4151ccdfb2c34e222884e317b3fb",
+        "size": 1870390
+      }
+    ],
+    "config": {
+      "version": 2,
+      "rewrites": [
+        {
+          "source": "/(.*)",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "/(.*)",
+          "headers": [
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "no-referrer"
+            },
+            {
+              "key": "X-Robots-Tag",
+              "value": "noindex, nofollow"
+            }
+          ]
+        }
+      ]
+    },
+    "preservedMarketingProject": "prj_xj3xPXcaYPowhoKwxs2jPQUq9h1w"
+  },
+  "dns": {
+    "provider": "Locaweb",
+    "record": "A",
+    "host": ".",
+    "value": "216.198.79.1",
+    "ttl": 3600,
+    "misconfigured": false,
+    "authoritativeResolved": true,
+    "publicCloudflareResolved": true,
+    "localResolverStillNegative": true,
+    "https200WithVerifiedTLSAndExplicitDNS": true,
+    "cert": {
+      "id": "cert_kvcCHX5qJ1QjLif40I7QAqo6",
+      "cns": [
+        "entregacondo.com.br"
+      ],
+      "createdAt": 1792772239508,
+      "expiresAt": 1800544727000,
+      "autoRenew": true
+    }
+  },
+  "mobile": {
+    "versionName": "0.1.23",
+    "versionCode": 24,
+    "installed": "2026-10-23 13:12:27 America/Sao_Paulo",
+    "apk": "C:/Users/leand/Downloads/EntregaCondo-acompanhamento-ativado-2026-10-23.apk",
+    "sha256": "12464AA40921765DC93B2D6D6F6A79631F9097CC086F12CD48F8C499D3D0CFB6",
+    "trackingBase": "https://entregacondo-dashboard.vercel.app"
+  }
+}

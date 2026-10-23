@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
+import { hasActiveSupabaseSession } from '../../../lib/company';
 
 export interface ItemFilaLimpezaClaimed {
   id: string;
@@ -47,6 +48,16 @@ export interface EstatisticasFilaLimpeza {
 export async function consultarEstatisticasFilaLimpeza(): Promise<EstatisticasFilaLimpeza> {
   if (!isSupabaseConfigured) {
     throw new Error('Supabase não configurado no ambiente.');
+  }
+
+  if (!(await hasActiveSupabaseSession())) {
+    return {
+      pendentes: 0,
+      emProcessamento: 0,
+      falhas: 0,
+      concluidos: 0,
+      total: 0,
+    };
   }
 
   const { data, error } = await supabase
@@ -115,6 +126,17 @@ export async function processarFilaLimpezaStorage(
 ): Promise<ResultadoProcessamentoFila> {
   if (!isSupabaseConfigured) {
     throw new Error('Supabase não configurado no ambiente.');
+  }
+
+  if (!(await hasActiveSupabaseSession())) {
+    return {
+      totalReivindicados: 0,
+      sucessosCompletos: 0,
+      removidosFisicoPendenteConfirmacao: 0,
+      falhasFisicas: 0,
+      errosConfirmacaoBanco: 0,
+      itens: [],
+    };
   }
 
   // 1. Reivindicação atômica e segura via RPC

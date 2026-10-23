@@ -171,6 +171,8 @@ BEGIN
 
     -- 8. Inserção das Entregas/Paradas vinculadas à rota
     FOR v_parada IN SELECT * FROM jsonb_to_recordset(v_paradas) AS x(
+        id UUID,
+        janela_data DATE, janela_inicio TIME, janela_fim TIME, coleta_origem_id UUID, tempo_atendimento_previsto_min INT,
         cliente_endereco_id UUID,
         destinatario_nome TEXT,
         destinatario_telefone TEXT,
@@ -196,6 +198,7 @@ BEGIN
         END IF;
 
         INSERT INTO public.entregas (
+            id,janela_data,janela_inicio,janela_fim,coleta_origem_id,tempo_atendimento_previsto_min,
             empresa_id,
             rota_id,
             motorista_id,
@@ -213,6 +216,7 @@ BEGIN
             ordem_na_rota,
             observacoes_gestor
         ) VALUES (
+            COALESCE(v_parada.id,gen_random_uuid()),v_parada.janela_data,v_parada.janela_inicio,v_parada.janela_fim,v_parada.coleta_origem_id,COALESCE(v_parada.tempo_atendimento_previsto_min,0),
             v_empresa_id,
             v_rota_id,
             v_motorista_id,
@@ -231,6 +235,10 @@ BEGIN
             v_parada.observacoes_gestor
         );
     END LOOP;
+
+    PERFORM ec_private.validar_agenda(
+      (SELECT array_agg(id ORDER BY ordem_na_rota,id) FROM public.entregas WHERE rota_id=v_rota_id),
+      p_dados->'agenda',(p_dados->>'planejamento_saida_em')::timestamptz,false);
 
     -- 9. Atualiza status do motorista para em_rota
     UPDATE public.motoristas

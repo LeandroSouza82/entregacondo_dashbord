@@ -7,6 +7,8 @@ import { supabase } from "../../lib/supabase";
 import { requireCompanyId } from "../../lib/company";
 import type { Database } from "../../types/database";
 import { RouteMap } from "../routing/RouteMap";
+import { MapStyleSelector } from "../routing/MapStyleSelector";
+import { DEFAULT_MAP_STYLE } from "../routing/mapStyles";
 import type { PontoParada } from "../../types/logistics";
 import {
   obterPontoPartidaPadrao,
@@ -53,6 +55,7 @@ export function OverviewView({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Todas");
   const [driverFilter, setDriverFilter] = useState("");
+  const [estiloMapa, setEstiloMapa] = useState<string>(DEFAULT_MAP_STYLE);
   const [loadError, setLoadError] = useState("");
   const [veiculosAtivos, setVeiculosAtivos] = useState<MotoristaVeiculoMapa[]>(
     [],
@@ -423,12 +426,9 @@ export function OverviewView({
           {loadError}
         </p>
       )}
-      <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-5 xl:divide-x divide-gray-200 bg-white border border-gray-300 rounded-2xl overflow-hidden max-xl:[&>*:nth-child(even)]:border-l max-xl:[&>*:nth-child(n+3)]:border-t max-xl:[&>*]:border-gray-200">
         {kpis.map(([label, value, caption], i) => (
-          <section
-            key={label}
-            className="bg-white border border-[#E1E6ED] rounded-2xl p-5"
-          >
+          <section key={label} className="p-5">
             <h2 className="text-sm font-semibold text-[#516074]">{label}</h2>
             <strong
               className={`block text-3xl font-extrabold mt-2 ${i === 4 ? "text-red-800" : ""}`}
@@ -454,11 +454,16 @@ export function OverviewView({
         ))}
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-[1.62fr_1fr] gap-6">
-        <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5">
+        <section className="bg-white border border-gray-300 rounded-2xl p-5">
           <div className="flex flex-wrap items-center gap-2 mb-4">
-            <h2 className="font-extrabold text-lg mr-auto">
+            <h2 className="font-extrabold text-lg">
               Rotas em tempo real
             </h2>
+            <MapStyleSelector
+              value={estiloMapa}
+              onChange={setEstiloMapa}
+              className="mr-auto"
+            />
             <button
               onClick={() => setDriverFilter("")}
               aria-pressed={!driverFilter}
@@ -478,6 +483,7 @@ export function OverviewView({
             ))}
           </div>
           <RouteMap
+            estiloMapa={estiloMapa}
             showStartPoint={false}
             routeOrigins={Object.fromEntries(
               rotasPlanejadas.map((r) => [
@@ -509,7 +515,7 @@ export function OverviewView({
           onAssign={onOpenNewDelivery || onGoToOptimizer}
         />
       </div>
-      <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5">
+      <section className="bg-white border border-gray-300 rounded-2xl p-5">
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <h2 className="text-lg font-extrabold mr-auto">Entregas de hoje</h2>
           {["Todas", "Em rota", "Entregue", "Ocorrência"].map((status) => (

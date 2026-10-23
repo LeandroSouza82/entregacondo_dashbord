@@ -415,3 +415,11 @@ enabled = true
 [functions.push-servicos]
 # Authenticated by a dedicated server-only secret inside the handler.
 verify_jwt = false
+
+[functions.assinatura-checkout]
+# The handler validates the user's JWT with Auth and the scoped reservation RPC.
+verify_jwt = false
+
+[functions.assinatura-webhook]
+# Mercado Pago authenticates notifications through HMAC, not a Supabase JWT.
+verify_jwt = false

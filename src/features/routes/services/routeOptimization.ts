@@ -1,3 +1,4 @@
+import { coordenadasValidas, resultadoEnderecoCompativel } from './addressCoordinates';
 import type { PontoParada, PontoCoordenada } from '../../../types/logistics';
 
 export interface PontoPartidaItem {
@@ -103,7 +104,7 @@ export async function geocodificarEndereco(
 ): Promise<{ nome: string; endereco: string; coordenadas: PontoCoordenada } | null> {
   if (!endereco || !endereco.trim()) return null;
 
-  const key = googleKey || (typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_GOOGLE_PLACES_KEY : '');
+  const key = googleKey || '';
   if (key) {
     try {
       const res = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
@@ -131,7 +132,8 @@ export async function geocodificarEndereco(
           `https://places.googleapis.com/v1/places/${first.placeId}?fields=displayName,formattedAddress,location&key=${key}`
         );
         const detData = await detRes.json();
-        if (detData.location?.latitude && detData.location?.longitude) {
+        if (detRes.ok && coordenadasValidas({ lat: detData.location?.latitude, lng: detData.location?.longitude }) &&
+            resultadoEnderecoCompativel(endereco, detData.formattedAddress || '')) {
           return {
             nome: detData.displayName?.text || first.text?.text || endereco,
             endereco: detData.formattedAddress || first.text?.text || endereco,
@@ -151,18 +153,19 @@ export async function geocodificarEndereco(
   try {
     const q = encodeURIComponent(`${endereco}, Santa Catarina, Brasil`);
     const headers = typeof window === 'undefined' ? { 'User-Agent': 'EntregaCondo-Dashboard/1.0' } : undefined;
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=1`, {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=5&addressdetails=1&countrycodes=br`, {
       ...(headers ? { headers } : {}),
     });
+    if (!res.ok) return null;
     const items = await res.json();
-    if (Array.isArray(items) && items.length > 0) {
+    const match = Array.isArray(items) ? items.find(item =>
+      coordenadasValidas({ lat: Number.parseFloat(item.lat), lng: Number.parseFloat(item.lon) }) &&
+      resultadoEnderecoCompativel(endereco, item.display_name || '', item.address)) : null;
+    if (match) {
       return {
         nome: endereco.split(',')[0].trim(),
-        endereco: items[0].display_name || endereco,
-        coordenadas: {
-          lat: parseFloat(items[0].lat),
-          lng: parseFloat(items[0].lon),
-        },
+        endereco: match.display_name || endereco,
+        coordenadas: { lat: Number.parseFloat(match.lat), lng: Number.parseFloat(match.lon) },
       };
     }
   } catch (err) {

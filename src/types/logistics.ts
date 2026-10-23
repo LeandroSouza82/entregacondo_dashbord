@@ -46,6 +46,7 @@ export interface PontoParada {
   nomeLocal: string;
   destinatario: string;
   unidade?: string;
+  whatsappCliente?: string;
   enderecoFormatado: string;
   coordenadas: PontoCoordenada;
   tempoMedioAtendimentoMinutos: number; // Histórico do condomínio/local
@@ -53,6 +54,11 @@ export interface PontoParada {
   codigoRastreio: string;
   tipoTarefa?: 'entrega' | 'coleta' | 'outros';
   descricaoOutro?: string;
+  observacoesGestor?: string;
+  janelaData?: string;
+  janelaInicio?: string;
+  janelaFim?: string;
+  coletaOrigemId?: string;
   horaPrevistaChegada?: string;
   horaPrevistaSaida?: string;
 }

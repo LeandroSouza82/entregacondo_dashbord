@@ -1,5 +1,6 @@
 import React from "react";
 import { Sidebar, type ActiveTab } from "./Sidebar";
+import { CompanySubscriptionNotice } from '../CompanySubscriptionNotice';
 import { Header } from "./Header";
 
 interface DashboardLayoutProps {
@@ -21,15 +22,16 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       <Sidebar activeTab={activeTab} onTabChange={onTabChange} />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 bg-[#E4E5E9]">
         {activeTab !== "overview" && activeTab !== "new_route" && (
           <Header
             onOpenNewDelivery={onOpenNewDelivery}
-            onOpenOptimizer={() => onTabChange("routing")}
+            onOpenOptimizer={() => onTabChange("new_route")}
           />
         )}
 
-        <main className="flex-1 p-4 md:p-8 overflow-y-auto">{children}</main>
+        <CompanySubscriptionNotice />
+        <main className="flex-1 p-4 md:p-8 overflow-y-auto bg-[#E4E5E9] bg-dot-grid">{children}</main>
       </div>
     </div>
   );

@@ -201,6 +201,7 @@ export interface Database {
           id: string
           empresa_id: string
           nome_identificador: string
+          whatsapp_cliente: string | null
           destinatario_padrao: string | null
           endereco_completo: string
           numero: string
@@ -220,6 +221,7 @@ export interface Database {
           id?: string
           empresa_id: string
           nome_identificador: string
+          whatsapp_cliente?: string | null
           destinatario_padrao?: string | null
           endereco_completo: string
           numero: string
@@ -261,6 +263,11 @@ export interface Database {
           data_hora_entrega: string | null
           janela_inicio: string | null
           janela_fim: string | null
+          janela_data: string | null
+          janela_inicio_em: string | null
+          janela_fim_em: string | null
+          coleta_origem_id: string | null
+          tempo_atendimento_previsto_min: number
           created_at: string
           updated_at: string
         }
@@ -285,11 +292,17 @@ export interface Database {
           data_hora_entrega?: string | null
           janela_inicio?: string | null
           janela_fim?: string | null
+          janela_data?: string | null
+          coleta_origem_id?: string | null
+          tempo_atendimento_previsto_min?: number
           created_at?: string
           updated_at?: string
         }
         Update: Partial<Database['public']['Tables']['entregas']['Insert']>
-        Relationships: [{ foreignKeyName: 'entregas_cliente_endereco_id_fkey'; columns: ['cliente_endereco_id']; isOneToOne: false; referencedRelation: 'clientes_enderecos'; referencedColumns: ['id'] }]
+        Relationships: [
+          { foreignKeyName: 'entregas_cliente_endereco_id_fkey'; columns: ['cliente_endereco_id']; isOneToOne: false; referencedRelation: 'clientes_enderecos'; referencedColumns: ['id'] },
+          { foreignKeyName: 'entregas_coleta_origem_fk'; columns: ['empresa_id','coleta_origem_id']; isOneToOne: false; referencedRelation: 'entregas'; referencedColumns: ['empresa_id','id'] }
+        ]
       }
       veiculos_motoristas: {
         Row: {
@@ -499,9 +512,20 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
+      iniciar_teste_empresa: {Args: {p_nome_empresa?: string | null}; Returns: Json}
+      obter_minha_assinatura: {Args: {p_empresa_id: string}; Returns: Json}
+      criar_compartilhamento_comprovante: {Args: {p_entrega_id:string;p_token:string;p_foto_url?:string|null;p_assinatura_url?:string|null}; Returns:Json}
+      obter_comprovante_compartilhado: {Args: {p_token:string}; Returns:Json}
+      revogar_compartilhamento_comprovante: {Args: {p_entrega_id:string}; Returns:Json}
+      obter_capacidades_rotas: {Args: Record<PropertyKey, never>; Returns: Json}
+      configurar_nome_empresa: {Args: {p_empresa_id: string; p_nome: string}; Returns: Json}
+      obter_acompanhamento_cliente: {Args: {p_token: string}; Returns: Json}
       enviar_servicos_motorista: {Args: {p_dados:Json;p_plano_coletas?:Json};Returns:Json}
+      enviar_pedidos_motorista: {Args: {p_dados:Json};Returns:Json}
 
       salvar_cliente_endereco: { Args: { p_dados: Json }; Returns: Json }
+      excluir_cliente_endereco: { Args: { p_id: string }; Returns: Json }
+      obter_comprovante_publico: { Args: { p_entrega_id: string }; Returns: Json }
 
       obter_meu_status_acesso: {
         Args: Record<PropertyKey, never>

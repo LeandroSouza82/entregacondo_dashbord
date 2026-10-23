@@ -38,6 +38,10 @@ BEGIN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'ACESSO_NEGADO', 'mensagem', 'Acesso de gestão obrigatório nesta empresa.');
     END IF;
 
+    IF p_dados ? 'whatsapp_cliente' AND NULLIF(p_dados->>'whatsapp_cliente','') IS NOT NULL AND p_dados->>'whatsapp_cliente' !~ '^[1-9][0-9]{9,14}$' THEN
+        RETURN jsonb_build_object('sucesso',false,'mensagem','WhatsApp inválido.');
+    END IF;
+
     -- 2. Extrai o nome/label aceitando qualquer variação enviada pelo frontend
     v_nome := TRIM(COALESCE(
         p_dados->>'nome_identificador',
@@ -68,12 +72,14 @@ BEGIN
     )), '');
 
     -- 5. Extrai coordenadas aceitando variações lat/lng e latitude/longitude
-    v_lat := (COALESCE(p_dados->>'latitude', p_dados->>'lat'))::NUMERIC;
-    v_lng := (COALESCE(p_dados->>'longitude', p_dados->>'lng'))::NUMERIC;
-
-    IF v_lat IS NULL OR v_lng IS NULL OR NOT (v_lat BETWEEN -90 AND 90) OR NOT (v_lng BETWEEN -180 AND 180) THEN
-        v_lat := -27.5954;
-        v_lng := -48.5480;
+    BEGIN
+        v_lat := (COALESCE(p_dados->>'latitude', p_dados->>'lat'))::NUMERIC;
+        v_lng := (COALESCE(p_dados->>'longitude', p_dados->>'lng'))::NUMERIC;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN jsonb_build_object('sucesso',false,'codigo','COORDENADAS_INVALIDAS','mensagem','Selecione o endereço no mapa antes de salvar.');
+    END;
+    IF v_lat IS NULL OR v_lng IS NULL OR NOT (v_lat BETWEEN -90 AND 90) OR NOT (v_lng BETWEEN -180 AND 180) OR (v_lat=0 AND v_lng=0) THEN
+        RETURN jsonb_build_object('sucesso',false,'codigo','COORDENADAS_INVALIDAS','mensagem','Selecione o endereço no mapa antes de salvar.');
     END IF;
 
     v_place_id := NULLIF(TRIM(COALESCE(p_dados->>'place_id', p_dados->>'placeId')), '');
@@ -101,6 +107,7 @@ BEGIN
     IF v_id IS NOT NULL THEN
         UPDATE public.clientes_enderecos
         SET 
+            whatsapp_cliente = CASE WHEN p_dados ? 'whatsapp_cliente' THEN NULLIF(p_dados->>'whatsapp_cliente','') ELSE whatsapp_cliente END,
             nome_identificador = v_nome,
             endereco_completo = v_endereco,
             latitude = v_lat,
@@ -123,6 +130,7 @@ BEGIN
         IF v_registro.id IS NOT NULL THEN
             UPDATE public.clientes_enderecos
             SET 
+                whatsapp_cliente = CASE WHEN p_dados ? 'whatsapp_cliente' THEN NULLIF(p_dados->>'whatsapp_cliente','') ELSE whatsapp_cliente END,
                 latitude = v_lat,
                 longitude = v_lng,
                 place_id = COALESCE(v_place_id, place_id),
@@ -136,6 +144,7 @@ BEGIN
                 empresa_id,
                 nome_identificador,
                 destinatario_padrao,
+                whatsapp_cliente,
                 endereco_completo,
                 numero,
                 bairro,
@@ -154,11 +163,12 @@ BEGIN
                 v_empresa_id,
                 v_nome,
                 p_dados->>'destinatario_padrao',
+                NULLIF(p_dados->>'whatsapp_cliente',''),
                 v_endereco,
                 COALESCE(p_dados->>'numero', ''),
                 COALESCE(p_dados->>'bairro', ''),
-                COALESCE(p_dados->>'cidade', 'Florianópolis'),
-                COALESCE(p_dados->>'cep', '88000-000'),
+                COALESCE(p_dados->>'cidade', ''),
+                COALESCE(p_dados->>'cep', ''),
                 v_lat,
                 v_lng,
                 v_place_id,

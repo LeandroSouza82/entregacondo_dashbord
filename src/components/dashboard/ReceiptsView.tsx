@@ -1,7 +1,8 @@
+import {shareReceipt} from "../../features/receipts/receiptSharing";
 import { receiptLabel } from "./receiptLabels";
 import { useEffect, useState } from "react";
-import { Camera, X } from "lucide-react";
-import { supabase } from "../../lib/supabase";
+import { Camera, Check, Copy, X } from "lucide-react";
+import { supabase, supabaseUrl } from "../../lib/supabase";
 import { requireCompanyId } from "../../lib/company";
 import type { Database } from "../../types/database";
 type Receipt = Database["public"]["Tables"]["entrega_comprovantes"]["Row"] & {
@@ -11,6 +12,9 @@ export function ReceiptsView({ title = "Comprovantes" }: { title?: string }) {
   const [rows, setRows] = useState<Receipt[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [copyingId,setCopyingId]=useState<string|null>(null);
+  const [copyNotice,setCopyNotice]=useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [date, setDate] = useState(() =>
     new Date().toLocaleDateString("en-CA"),
   );
@@ -66,6 +70,57 @@ export function ReceiptsView({ title = "Comprovantes" }: { title?: string }) {
     }
     setPreview(result.data.signedUrl);
   }
+
+  async function handleCopy(r: Receipt) {
+    if (copyingId) return;
+    setCopyingId(r.entrega_id);setError('');setCopyNotice('');
+    try {
+    const shared = await shareReceipt(supabase,r,window.location.href,supabaseUrl);
+    const publicUrl = shared.url;
+    const dataConclusao = new Date(r.concluida_em);
+    const dataFormatada = dataConclusao.toLocaleDateString("pt-BR");
+    const horaFormatada = dataConclusao.toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    const tempoFormatado = `${Math.floor(r.duracao_segundos / 60)} min ${r.duracao_segundos % 60}s`;
+    const recebedorFormatado =
+      [receiptLabel(r.recebedor_tipo), r.recebedor_nome]
+        .filter(Boolean)
+        .join(" · ") + (r.observacao ? ` (${r.observacao})` : "");
+
+    const texto = [
+      "📦 *Comprovante de Atendimento*",
+      `👤 *Cliente:* ${r.entregas?.destinatario_nome || "Cliente"}`,
+      `🤝 *Recebedor:* ${recebedorFormatado || "Não informado"}`,
+      `🕒 *Data/Hora:* ${dataFormatada} às ${horaFormatada}`,
+      `⏱️ *Tempo de atendimento:* ${tempoFormatado}`,
+      "",
+      "📎 *Evidência:*",
+      publicUrl,
+    ].join("\n");
+
+    await navigator.clipboard.writeText(texto);
+    setCopiedId(r.entrega_id);
+    setCopyNotice('Comprovante copiado com link válido por 55 minutos. Um novo link substitui o anterior.');
+    setTimeout(() => setCopiedId(curr=>curr===r.entrega_id?null:curr),2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível copiar o comprovante.');
+    } finally {setCopyingId(null);}
+  }
+
+  async function revokeShare(r:Receipt) {
+    if(copyingId)return;
+    setCopyingId(r.entrega_id);setError('');setCopyNotice('');
+    try {
+      const {data,error}=await supabase.rpc('revogar_compartilhamento_comprovante',{p_entrega_id:r.entrega_id});
+      if(error || (data as {sucesso?:boolean}|null)?.sucesso!==true)throw new Error('Não foi possível revogar o link. Tente novamente.');
+      setCopiedId(null);setCopyNotice('Link de acesso ao comprovante revogado.');
+    } catch(error){setError(error instanceof Error?error.message:'Não foi possível revogar o link.');}
+    finally {setCopyingId(null);}
+  }
+
   const success = rows.filter((r) => r.recebedor_tipo !== "tentativa_falha");
   const average = success.length
     ? success.reduce((sum, r) => sum + r.duracao_segundos, 0) / success.length
@@ -99,18 +154,19 @@ export function ReceiptsView({ title = "Comprovantes" }: { title?: string }) {
             average === null ? "—" : `${(average / 60).toFixed(1)} min`,
           ],
         ].map(([label, value]) => (
-          <section key={label} className="bg-white border rounded-2xl p-5">
+          <section key={label} className="bg-white border border-gray-300 rounded-2xl p-5">
             <p className="text-sm text-slate-500">{label}</p>
             <strong className="text-2xl">{loading ? "—" : value}</strong>
           </section>
         ))}
       </div>
+      {copyNotice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{copyNotice}</p>}
       {error && (
         <p role="alert" className="bg-red-50 text-red-800 p-4 rounded-xl">
           {error}
         </p>
       )}
-      <section className="bg-white border rounded-2xl overflow-x-auto">
+      <section className="bg-white border border-gray-300 rounded-2xl overflow-x-auto">
         <table className="w-full text-sm text-left min-w-[680px]">
           <thead className="bg-slate-50 text-slate-500">
             <tr>
@@ -153,25 +209,44 @@ export function ReceiptsView({ title = "Comprovantes" }: { title?: string }) {
                   {r.duracao_segundos % 60}s
                 </td>
                 <td className="p-4">
-                  <div className="flex gap-3">
-                    {r.foto_path && (
-                      <button
-                        aria-label={`Ver foto de ${r.entregas?.destinatario_nome || "entrega"}`}
-                        onClick={() => void open(r.foto_path!)}
-                        className="text-blue-700"
-                      >
-                        <Camera size={20} />
-                      </button>
-                    )}
-                    {r.assinatura_path && (
-                      <button
-                        onClick={() => void open(r.assinatura_path!)}
-                        className="text-blue-700 font-semibold"
-                      >
-                        Assinatura
-                      </button>
-                    )}
-                    {!r.foto_path && !r.assinatura_path && "—"}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex gap-3 items-center">
+                      {r.foto_path && (
+                        <button
+                          aria-label={`Ver foto de ${r.entregas?.destinatario_nome || "entrega"}`}
+                          onClick={() => void open(r.foto_path!)}
+                          className="text-blue-700"
+                        >
+                          <Camera size={20} />
+                        </button>
+                      )}
+                      {r.assinatura_path && (
+                        <button
+                          onClick={() => void open(r.assinatura_path!)}
+                          className="text-blue-700 font-semibold"
+                        >
+                          Assinatura
+                        </button>
+                      )}
+                      {!r.foto_path && !r.assinatura_path && (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopy(r)}
+                      disabled={copyingId!==null}
+                      title="Copiar comprovante com link temporário"
+                      aria-label="Copiar dados do comprovante"
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer shrink-0"
+                    >
+                      {copiedId === r.entrega_id ? (
+                        <Check size={16} className="text-emerald-600" />
+                      ) : (
+                        <Copy size={16} />
+                      )}
+                    </button>
+                    <button type="button" disabled={copyingId!==null} onClick={()=>void revokeShare(r)} title="Revogar link temporário" aria-label="Revogar link do comprovante" className="p-1.5 rounded-lg text-gray-400 hover:text-red-700 disabled:opacity-50"><X size={16}/></button>
                   </div>
                 </td>
               </tr>

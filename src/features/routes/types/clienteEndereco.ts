@@ -5,6 +5,7 @@ export interface ClienteEnderecoItem {
   empresa_id?: string;
   nome_identificador: string;
   destinatario_padrao?: string | null;
+  whatsapp_cliente?: string | null;
   endereco_completo: string;
   numero?: string;
   bairro?: string;
@@ -36,6 +37,7 @@ export interface NovoClienteEnderecoPayload {
   nome_identificador?: string;
   label?: string;
   destinatario_padrao?: string | null;
+  whatsapp_cliente?: string | null;
   endereco_completo?: string;
   full_address?: string;
   coordenadas?: PontoCoordenada;

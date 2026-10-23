@@ -8,7 +8,7 @@ DO $$ BEGIN
 END $$;
 CREATE SCHEMA auth;
 CREATE TABLE auth.users(
-  id uuid PRIMARY KEY, email text, raw_user_meta_data jsonb DEFAULT '{}'::jsonb,
+  id uuid PRIMARY KEY, email text, email_confirmed_at timestamptz, is_anonymous boolean NOT NULL DEFAULT false, raw_user_meta_data jsonb DEFAULT '{}'::jsonb,
   raw_app_meta_data jsonb DEFAULT '{}'::jsonb, role text, aud text,
   created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
 );

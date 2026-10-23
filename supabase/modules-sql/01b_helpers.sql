@@ -9,6 +9,7 @@ CREATE OR REPLACE FUNCTION public.fn_safe_uuid(p_val TEXT)
 RETURNS UUID
 LANGUAGE plpgsql
 IMMUTABLE
+SET search_path=''
 AS $$
 BEGIN
     IF p_val IS NULL OR p_val !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN

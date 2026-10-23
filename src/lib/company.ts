@@ -1,68 +1,53 @@
 import { supabase } from './supabase';
 
+const DEMO_COMPANY_ID = '11111111-1111-1111-1111-111111111111';
+
+export function isDemoModeActive(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return (
+      new URLSearchParams(window.location.search).get('demo') === 'true' ||
+      window.localStorage.getItem('ec_demo_auth') === 'true'
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function hasActiveSupabaseSession(): Promise<boolean> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return Boolean(data?.session?.access_token);
+  } catch {
+    return false;
+  }
+}
+
 export async function requireCompanyId(): Promise<string> {
-  // 1. Tenta sincronizar perfil na nuvem, mas tolera ausência da RPC no schema cache
-  try {
-    const profile = await supabase.rpc('sincronizar_meu_perfil');
-    if (profile.error) {
-      console.warn('[company] RPC sincronizar_meu_perfil ignorada:', profile.error.message);
-    }
-  } catch (err) {
-    console.warn('[company] Falha ao invocar RPC sincronizar_meu_perfil:', err);
-  }
-
-  // 2. Tenta obter status de acesso via RPC oficial
-  try {
-    const { data, error } = await supabase.rpc('obter_meu_status_acesso');
-    if (!error && data) {
-      const status = data as { empresa_id?: string; status?: string; papel?: string } | null;
-      if (status?.empresa_id && (status.status === 'aprovado' || !status.status) && (!status.papel || ['admin', 'gestor'].includes(status.papel))) {
-        localStorage.setItem('ec_active_company_id', status.empresa_id);
-        return status.empresa_id;
-      }
-    }
-  } catch (err) {
-    console.warn('[company] Falha ao invocar RPC obter_meu_status_acesso:', err);
-  }
-
-  // 3. Obtém usuário autenticado atual
-  const { data: userRes, error: userErr } = await supabase.auth.getUser();
-  if (userErr || !userRes?.user) {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw new Error('Não foi possível conferir sua sessão. Entre novamente.');
+  if (!sessionData.session) {
+    if (import.meta.env.DEV && isDemoModeActive()) return DEMO_COMPANY_ID;
     throw new Error('Usuário não autenticado.');
   }
-
-  const userId = userRes.user.id;
-  const userMetadata = userRes.user.user_metadata || {};
-  const nomeUsuario = userMetadata.name || userMetadata.full_name || userRes.user.email?.split('@')[0] || 'Gestor';
-
-  // Sincroniza perfis_usuarios diretamente se possível
-  try {
-    await supabase.from('perfis_usuarios').upsert({
-      id: userId,
-      email: userRes.user.email ?? '',
-      nome: nomeUsuario,
-      avatar_url: userMetadata.avatar_url ?? null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'id' });
-  } catch {
-    // Silencia se RLS não permitir inserção direta
-  }
-
-  // 4. Verifica se o usuário já possui vínculo aprovado em empresa_membros
-  try {
-    const { data: membro } = await supabase
-      .from('empresa_membros')
-      .select('empresa_id, papel, status')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (membro?.empresa_id) {
-      localStorage.setItem('ec_active_company_id', membro.empresa_id);
-      return membro.empresa_id;
+  const profile = await supabase.rpc('sincronizar_meu_perfil');
+  if (profile.error) throw new Error('Não foi possível preparar seu perfil. Tente novamente.');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await supabase.rpc('obter_meu_status_acesso');
+    if (error) throw new Error('Não foi possível conferir seu vínculo empresarial. Tente novamente.');
+    const access = data as {empresa_id?: string; status?: string; papel?: string; mensagem?: string} | null;
+    if (access?.status === 'aprovado' && ['admin', 'gestor'].includes(access.papel || '') && access.empresa_id) {
+      localStorage.setItem('ec_active_company_id', access.empresa_id);
+      return access.empresa_id;
     }
-  } catch (err) {
-    console.warn('[company] Falha ao consultar empresa_membros existente:', err);
+    if (attempt === 0 && access?.status === 'sem_vinculo') {
+      const result = await supabase.rpc('iniciar_teste_empresa', {});
+      if (result.error) throw new Error(result.error.message || 'Não foi possível iniciar o teste.');
+      if (!(result.data as {sucesso?: boolean})?.sucesso) throw new Error('Não foi possível preparar sua empresa.');
+      continue;
+    }
+    localStorage.removeItem('ec_active_company_id');
+    throw new Error(access?.mensagem || 'Acesso de gestão não aprovado nesta empresa.');
   }
-
-  throw new Error('Usuário sem vínculo aprovado com uma empresa. Solicite aprovação do gestor.');
+  throw new Error('Não foi possível preparar sua empresa. Tente novamente.');
 }

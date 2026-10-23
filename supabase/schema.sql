@@ -135,6 +135,7 @@ CREATE OR REPLACE FUNCTION public.fn_safe_uuid(p_val TEXT)
 RETURNS UUID
 LANGUAGE plpgsql
 IMMUTABLE
+SET search_path=''
 AS $$
 BEGIN
     IF p_val IS NULL OR p_val !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
@@ -478,6 +479,7 @@ CREATE TABLE IF NOT EXISTS public.clientes_enderecos (
     empresa_id UUID NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
     nome_identificador VARCHAR(255) NOT NULL,
     destinatario_padrao VARCHAR(255),
+    whatsapp_cliente VARCHAR(30),
     endereco_completo TEXT NOT NULL,
     numero VARCHAR(50) NOT NULL,
     bairro VARCHAR(100) NOT NULL,
@@ -568,7 +570,138 @@ CREATE TABLE IF NOT EXISTS public.historico_atendimentos (
 ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS place_id VARCHAR(255);
 CREATE OR REPLACE VIEW public.saved_addresses WITH (security_invoker=true) AS
 SELECT id,empresa_id,nome_identificador AS label,endereco_completo AS full_address,latitude AS lat,longitude AS lng,place_id,created_at FROM public.clientes_enderecos;
+REVOKE ALL ON public.saved_addresses FROM anon;
 GRANT SELECT ON public.saved_addresses TO authenticated;
+
+-- ------------------------------------------------------------------------------
+-- MÓDULO: supabase/modules-sql/03b_route_rules.sql
+-- ------------------------------------------------------------------------------
+
+-- Optional planning rules. Legacy time columns/data remain untouched.
+CREATE SCHEMA IF NOT EXISTS ec_private;
+REVOKE ALL ON SCHEMA ec_private FROM PUBLIC,anon,authenticated;
+ALTER TABLE public.entregas ADD COLUMN IF NOT EXISTS janela_inicio time;
+ALTER TABLE public.entregas ADD COLUMN IF NOT EXISTS janela_fim time;
+ALTER TABLE public.entregas ADD COLUMN IF NOT EXISTS janela_data date;
+ALTER TABLE public.entregas ADD COLUMN IF NOT EXISTS coleta_origem_id uuid;
+ALTER TABLE public.entregas ADD COLUMN IF NOT EXISTS tempo_atendimento_previsto_min integer NOT NULL DEFAULT 0;
+ALTER TABLE public.entregas ADD COLUMN IF NOT EXISTS janela_inicio_em timestamptz
+ GENERATED ALWAYS AS ((janela_data+janela_inicio) AT TIME ZONE 'America/Sao_Paulo') STORED;
+ALTER TABLE public.entregas ADD COLUMN IF NOT EXISTS janela_fim_em timestamptz
+ GENERATED ALWAYS AS ((janela_data+janela_fim) AT TIME ZONE 'America/Sao_Paulo') STORED;
+ALTER TABLE public.entregas ADD CONSTRAINT entregas_empresa_id_id_unique UNIQUE(empresa_id,id);
+ALTER TABLE public.entregas ADD CONSTRAINT entregas_coleta_origem_fk
+ FOREIGN KEY(empresa_id,coleta_origem_id) REFERENCES public.entregas(empresa_id,id) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE public.entregas ADD CONSTRAINT entregas_janela_planejada_check
+ CHECK(janela_data IS NULL OR (janela_inicio IS NOT NULL AND janela_fim IS NOT NULL AND janela_fim>janela_inicio));
+ALTER TABLE public.entregas ADD CONSTRAINT entregas_atendimento_previsto_check CHECK(tempo_atendimento_previsto_min BETWEEN 0 AND 240);
+CREATE INDEX entregas_coleta_origem_idx ON public.entregas(empresa_id,coleta_origem_id) WHERE coleta_origem_id IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION ec_private.proteger_regras_rota() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE changed boolean; parent_status text;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  changed:=NEW.janela_data IS NOT NULL OR NEW.coleta_origem_id IS NOT NULL OR NEW.tempo_atendimento_previsto_min<>0;
+ ELSE
+  changed:=(NEW.janela_data,NEW.janela_inicio,NEW.janela_fim,NEW.coleta_origem_id,NEW.tempo_atendimento_previsto_min)
+    IS DISTINCT FROM (OLD.janela_data,OLD.janela_inicio,OLD.janela_fim,OLD.coleta_origem_id,OLD.tempo_atendimento_previsto_min);
+  IF changed AND (OLD.chegada_em IS NOT NULL OR OLD.status IN ('entregue','tentativa_falha','cancelada')) THEN
+   RAISE EXCEPTION 'Não altere as condições de um atendimento iniciado ou finalizado.';
+  END IF;
+ END IF;
+ IF changed THEN
+  IF auth.uid() IS NOT NULL AND public.fn_usuario_e_gestor_empresa(NEW.empresa_id,auth.uid()) IS NOT TRUE THEN
+   RAISE EXCEPTION 'Somente a gestão pode definir as condições do pedido.' USING ERRCODE='42501';
+  END IF;
+  IF NEW.janela_data IS NULL AND (NEW.janela_inicio IS NOT NULL OR NEW.janela_fim IS NOT NULL) THEN
+   RAISE EXCEPTION 'Informe a data junto com os dois horários.';
+  END IF;
+  IF NEW.janela_data IS NOT NULL AND (extract(epoch FROM (NEW.janela_fim-NEW.janela_inicio))/60)<NEW.tempo_atendimento_previsto_min THEN
+   RAISE EXCEPTION 'O atendimento previsto não cabe na faixa de horário.';
+  END IF;
+ END IF;
+ IF NEW.coleta_origem_id IS NOT NULL AND NEW.status NOT IN ('tentativa_falha','cancelada') AND
+   (TG_OP='INSERT' AND (NEW.chegada_em IS NOT NULL OR NEW.status='entregue') OR
+    TG_OP='UPDATE' AND (NEW.chegada_em IS DISTINCT FROM OLD.chegada_em OR NEW.status='entregue' AND OLD.status<>'entregue')) THEN
+  SELECT status INTO parent_status FROM public.entregas WHERE id=NEW.coleta_origem_id AND empresa_id=NEW.empresa_id FOR SHARE;
+  IF parent_status IS DISTINCT FROM 'entregue' THEN RAISE EXCEPTION 'Conclua a coleta vinculada antes de atender esta entrega.'; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION ec_private.proteger_regras_rota() FROM PUBLIC,anon,authenticated;
+CREATE TRIGGER entregas_proteger_regras BEFORE INSERT OR UPDATE ON public.entregas FOR EACH ROW EXECUTE FUNCTION ec_private.proteger_regras_rota();
+
+CREATE OR REPLACE FUNCTION ec_private.validar_vinculo_coleta() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE child public.entregas%ROWTYPE; parent public.entregas%ROWTYPE;
+BEGIN
+ FOR child IN SELECT * FROM public.entregas WHERE empresa_id=NEW.empresa_id AND coleta_origem_id IS NOT NULL AND (id=NEW.id OR coleta_origem_id=NEW.id) ORDER BY id LOOP
+  SELECT * INTO parent FROM public.entregas WHERE id=child.coleta_origem_id FOR SHARE;
+  IF NOT FOUND OR child.id=parent.id OR child.tipo_tarefa<>'entrega' OR parent.tipo_tarefa<>'coleta'
+   OR child.empresa_id<>parent.empresa_id OR child.motorista_id IS DISTINCT FROM parent.motorista_id THEN
+   RAISE EXCEPTION 'Vincule a entrega a uma coleta da mesma empresa e do mesmo motorista.';
+  END IF;
+  IF child.rota_id IS NOT NULL AND child.rota_id=parent.rota_id
+   AND child.status NOT IN ('entregue','tentativa_falha','cancelada') AND parent.status NOT IN ('entregue','tentativa_falha','cancelada')
+   AND COALESCE(parent.ordem_na_rota,2147483647)>=COALESCE(child.ordem_na_rota,2147483647) THEN
+   RAISE EXCEPTION 'A entrega deve ficar depois da coleta vinculada.';
+  END IF;
+ END LOOP;
+ RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION ec_private.validar_vinculo_coleta() FROM PUBLIC,anon,authenticated;
+CREATE CONSTRAINT TRIGGER entregas_validar_vinculo AFTER INSERT OR UPDATE ON public.entregas
+ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ec_private.validar_vinculo_coleta();
+
+CREATE OR REPLACE FUNCTION ec_private.validar_agenda(p_ids uuid[],p_agenda jsonb,p_partida timestamptz,p_atual boolean DEFAULT true)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE item record; visit jsonb; t timestamptz; finish timestamptz; previous timestamptz:=p_partida;
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM public.entregas WHERE id=ANY(p_ids) AND janela_data IS NOT NULL) THEN RETURN; END IF;
+ IF p_partida IS NULL OR p_partida<now()-interval '5 minutes' OR (p_atual AND p_partida NOT BETWEEN now()-interval '5 minutes' AND now()+interval '5 minutes')
+   OR jsonb_typeof(p_agenda) IS DISTINCT FROM 'array' OR jsonb_array_length(p_agenda)<>cardinality(p_ids) THEN
+  RAISE EXCEPTION 'Recalcule os horários antes de salvar ou enviar a rota.';
+ END IF;
+ FOR item IN SELECT e.*,u.pos FROM unnest(p_ids) WITH ORDINALITY u(id,pos) JOIN public.entregas e ON e.id=u.id ORDER BY u.pos LOOP
+  visit:=p_agenda->(item.pos::integer-1);
+  IF visit->>'entrega_id' IS DISTINCT FROM item.id::text THEN RAISE EXCEPTION 'A agenda não corresponde à sequência dos pedidos.'; END IF;
+  t:=(visit->>'inicio_em')::timestamptz; finish:=(visit->>'fim_em')::timestamptz;
+  IF t IS NULL OR finish IS NULL OR t<previous OR finish<t+make_interval(mins=>item.tempo_atendimento_previsto_min)
+   OR item.janela_data IS NOT NULL AND (t<item.janela_inicio_em OR finish>item.janela_fim_em) THEN
+   RAISE EXCEPTION 'A sequência não cabe nos horários definidos. Recalcule a organização.';
+  END IF;
+  previous:=finish;
+ END LOOP;
+END $$;
+REVOKE ALL ON FUNCTION ec_private.validar_agenda(uuid[],jsonb,timestamptz,boolean) FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION ec_private.encaixar_coletas_vinculadas(p_rota uuid) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE ids uuid[]; slots integer[]; item record; i integer; j integer;
+BEGIN
+ SELECT array_agg(id ORDER BY ordem_na_rota NULLS LAST,id),array_agg(pos ORDER BY ordem_na_rota NULLS LAST,id) INTO ids,slots
+ FROM (SELECT id,ordem_na_rota,row_number() OVER(ORDER BY ordem_na_rota NULLS LAST,id)::integer pos,status FROM public.entregas WHERE rota_id=p_rota) e
+ WHERE status NOT IN ('entregue','tentativa_falha','cancelada');
+ FOR item IN SELECT id,coleta_origem_id FROM public.entregas WHERE rota_id=p_rota AND coleta_origem_id IS NOT NULL ORDER BY ordem_na_rota NULLS LAST,id LOOP
+  i:=array_position(ids,item.id); j:=array_position(ids,item.coleta_origem_id);
+  IF i IS NOT NULL AND j>i THEN
+   ids:=array_remove(ids,item.coleta_origem_id);
+   ids:=COALESCE(ids[1:i-1],'{}'::uuid[])||ARRAY[item.coleta_origem_id]||ids[i:cardinality(ids)];
+  END IF;
+ END LOOP;
+ UPDATE public.entregas e SET ordem_na_rota=slots[u.pos::integer] FROM unnest(ids) WITH ORDINALITY u(id,pos) WHERE e.id=u.id;
+END $$;
+REVOKE ALL ON FUNCTION ec_private.encaixar_coletas_vinculadas(uuid) FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION public.obter_capacidades_rotas() RETURNS jsonb
+LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $$
+BEGIN
+ IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Entre novamente.' USING ERRCODE='42501'; END IF;
+ RETURN jsonb_build_object('regras_opcionais',1,'fuso_horarios','America/Sao_Paulo');
+END $$;
+REVOKE ALL ON FUNCTION public.obter_capacidades_rotas() FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.obter_capacidades_rotas() TO authenticated;
 
 -- ------------------------------------------------------------------------------
 -- MÓDULO: supabase/modules-sql/04_storage.sql
@@ -3499,6 +3632,8 @@ BEGIN
 
     -- 8. Inserção das Entregas/Paradas vinculadas à rota
     FOR v_parada IN SELECT * FROM jsonb_to_recordset(v_paradas) AS x(
+        id UUID,
+        janela_data DATE, janela_inicio TIME, janela_fim TIME, coleta_origem_id UUID, tempo_atendimento_previsto_min INT,
         cliente_endereco_id UUID,
         destinatario_nome TEXT,
         destinatario_telefone TEXT,
@@ -3524,6 +3659,7 @@ BEGIN
         END IF;
 
         INSERT INTO public.entregas (
+            id,janela_data,janela_inicio,janela_fim,coleta_origem_id,tempo_atendimento_previsto_min,
             empresa_id,
             rota_id,
             motorista_id,
@@ -3541,6 +3677,7 @@ BEGIN
             ordem_na_rota,
             observacoes_gestor
         ) VALUES (
+            COALESCE(v_parada.id,gen_random_uuid()),v_parada.janela_data,v_parada.janela_inicio,v_parada.janela_fim,v_parada.coleta_origem_id,COALESCE(v_parada.tempo_atendimento_previsto_min,0),
             v_empresa_id,
             v_rota_id,
             v_motorista_id,
@@ -3559,6 +3696,10 @@ BEGIN
             v_parada.observacoes_gestor
         );
     END LOOP;
+
+    PERFORM ec_private.validar_agenda(
+      (SELECT array_agg(id ORDER BY ordem_na_rota,id) FROM public.entregas WHERE rota_id=v_rota_id),
+      p_dados->'agenda',(p_dados->>'planejamento_saida_em')::timestamptz,false);
 
     -- 9. Atualiza status do motorista para em_rota
     UPDATE public.motoristas
@@ -3675,6 +3816,107 @@ END;
 $$;
 
 -- ------------------------------------------------------------------------------
+-- MÓDULO: supabase/modules-sql/07_driver_order_inbox.sql
+-- ------------------------------------------------------------------------------
+
+-- New dispatches are offers. Existing deliveries remain available without backfill.
+CREATE TABLE public.pedidos_fluxo (
+ entrega_id uuid PRIMARY KEY REFERENCES public.entregas(id),
+ empresa_id uuid NOT NULL REFERENCES public.empresas(id),
+ motorista_id uuid NOT NULL REFERENCES public.motoristas(id),
+ lote_id uuid NOT NULL REFERENCES public.rotas_planejadas(id),
+ etapa text NOT NULL DEFAULT 'ofertado' CHECK(etapa IN ('ofertado','aguardando_retirada','liberado')),
+ aceito_em timestamptz,
+ retirado_em timestamptz
+);
+ALTER TABLE public.pedidos_fluxo ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.pedidos_fluxo FROM PUBLIC,anon,authenticated;
+GRANT SELECT ON public.pedidos_fluxo TO authenticated;
+CREATE POLICY pedidos_fluxo_leitura ON public.pedidos_fluxo FOR SELECT TO authenticated
+USING(public.fn_usuario_pode_operar_motorista(empresa_id,motorista_id) OR public.fn_usuario_e_gestor_empresa(empresa_id,auth.uid()));
+
+CREATE FUNCTION public.enviar_pedidos_motorista(p_dados jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE r jsonb; rid uuid; company uuid := (p_dados->>'empresa_id')::uuid; driver uuid := (p_dados->>'motorista_id')::uuid; k text:=p_dados->>'idempotency_key'; h text;
+BEGIN
+ IF auth.uid() IS NULL OR public.fn_usuario_e_gestor_empresa(company,auth.uid()) IS NOT TRUE THEN RAISE EXCEPTION 'Acesso negado'; END IF;
+ IF k IS NULL OR length(k) NOT BETWEEN 1 AND 80 THEN RAISE EXCEPTION 'Chave de envio inválida'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(company::text||':envio:'||k,0));
+ h:=encode(sha256(convert_to(jsonb_build_object('motorista_id',driver,'paradas',p_dados->'paradas')::text,'UTF8')),'hex');
+ SELECT resultado INTO r FROM public.operacoes_envio_motorista WHERE empresa_id=company AND chave=k AND payload_hash=h;
+ IF FOUND THEN RETURN r||jsonb_build_object('idempotente',true); END IF;
+ IF EXISTS(SELECT 1 FROM public.operacoes_envio_motorista WHERE empresa_id=company AND chave=k) THEN RAISE EXCEPTION 'Envio já utilizado com outros pedidos'; END IF;
+ r:=public.despachar_rota_transacional(p_dados);
+ IF r->>'sucesso' IS DISTINCT FROM 'true' THEN RETURN r; END IF;
+ rid:=(r->>'rota_id')::uuid;
+ INSERT INTO public.pedidos_fluxo(entrega_id,empresa_id,motorista_id,lote_id)
+ SELECT id,empresa_id,motorista_id,rota_id FROM public.entregas WHERE rota_id=rid ON CONFLICT DO NOTHING;
+ r:=r||jsonb_build_object('nova_rota_id',rid,'codigo','PEDIDOS_OFERTADOS','mensagem','Pedidos enviados para aceite do motorista.');
+ INSERT INTO public.operacoes_envio_motorista VALUES(company,k,h,r,now());
+ RETURN r;
+END $$;
+
+CREATE FUNCTION public.aceitar_pedidos_motorista(p_ids uuid[]) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE f public.pedidos_fluxo%ROWTYPE; target public.rotas_planejadas%ROWTYPE; item record; n integer; snapshot jsonb;
+BEGIN
+ IF auth.uid() IS NULL OR cardinality(p_ids) NOT BETWEEN 1 AND 500 THEN RAISE EXCEPTION 'Pedidos inválidos'; END IF;
+ SELECT * INTO f FROM public.pedidos_fluxo WHERE entrega_id=p_ids[1];
+ IF NOT FOUND OR public.fn_usuario_pode_operar_motorista(f.empresa_id,f.motorista_id) IS NOT TRUE OR NOT EXISTS(SELECT 1 FROM public.motoristas WHERE id=f.motorista_id AND empresa_id=f.empresa_id AND user_id=auth.uid()) THEN RAISE EXCEPTION 'Acesso negado'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(f.empresa_id::text||':'||f.motorista_id::text,0));
+ IF EXISTS(SELECT 1 FROM unnest(p_ids) requested(id) WHERE NOT EXISTS(SELECT 1 FROM public.pedidos_fluxo x JOIN public.entregas e ON e.id=x.entrega_id JOIN public.rotas_planejadas r ON r.id=e.rota_id WHERE x.entrega_id=requested.id AND x.empresa_id=f.empresa_id AND x.motorista_id=f.motorista_id AND e.motorista_id=f.motorista_id AND e.empresa_id=f.empresa_id AND r.status IN ('planejada','em_execucao'))) THEN RAISE EXCEPTION 'Pedidos alterados; atualize'; END IF;
+ SELECT r.* INTO target FROM public.rotas_planejadas r WHERE r.empresa_id=f.empresa_id AND r.motorista_id=f.motorista_id AND r.status IN ('planejada','em_execucao') AND EXISTS(SELECT 1 FROM public.entregas e LEFT JOIN public.pedidos_fluxo x ON x.entrega_id=e.id WHERE e.rota_id=r.id AND (x.entrega_id IS NULL OR x.etapa<>'ofertado')) ORDER BY (r.status='em_execucao') DESC,r.created_at,r.id LIMIT 1 FOR UPDATE;
+ IF NOT FOUND THEN SELECT r.* INTO target FROM public.rotas_planejadas r JOIN public.entregas e ON e.rota_id=r.id WHERE e.id=p_ids[1] FOR UPDATE OF r; END IF;
+ SELECT COALESCE(max(ordem_na_rota),0) INTO n FROM public.entregas WHERE rota_id=target.id;
+ FOR item IN SELECT e.*,r.ordem_paradas_json FROM public.entregas e JOIN public.rotas_planejadas r ON r.id=e.rota_id JOIN public.pedidos_fluxo x ON x.entrega_id=e.id WHERE e.id=ANY(p_ids) AND x.etapa='ofertado' ORDER BY e.ordem_na_rota,e.id FOR UPDATE OF e LOOP
+  IF item.rota_id<>target.id THEN
+   SELECT value INTO snapshot FROM jsonb_array_elements(COALESCE(item.ordem_paradas_json,'[]')) WHERE value->>'id'=item.id::text OR value->>'cliente_endereco_id'=item.cliente_endereco_id::text LIMIT 1;
+   n:=n+1;
+   UPDATE public.entregas SET rota_id=target.id,ordem_na_rota=n WHERE id=item.id;
+   IF snapshot IS NOT NULL THEN UPDATE public.rotas_planejadas SET ordem_paradas_json=COALESCE(ordem_paradas_json,'[]')||jsonb_build_array(snapshot||jsonb_build_object('id',item.id,'sequencia',n)) WHERE id=target.id; END IF;
+  END IF;
+  UPDATE public.pedidos_fluxo SET etapa=CASE WHEN item.tipo_tarefa='entrega' AND item.coleta_origem_id IS NULL THEN 'aguardando_retirada' ELSE 'liberado' END,aceito_em=now() WHERE entrega_id=item.id;
+ END LOOP;
+ -- Preserve linked pickups before their deliveries, even on partial batch acceptance.
+ IF EXISTS(SELECT 1 FROM public.entregas WHERE rota_id=target.id AND (coleta_origem_id IS NOT NULL OR janela_data IS NOT NULL)) THEN
+  PERFORM ec_private.encaixar_coletas_vinculadas(target.id);
+  UPDATE public.rotas_planejadas SET metricas_fonte=NULL,metricas_atualizadas_em=NULL,ordem_paradas_json=(
+   SELECT COALESCE(jsonb_agg(to_jsonb(e)||jsonb_build_object('sequencia',e.ordem_na_rota,'destinatario',e.destinatario_nome,
+    'nome_local',c.nome_identificador,'endereco_formatado',c.endereco_completo,
+    'coordenadas',jsonb_build_object('lat',c.latitude,'lng',c.longitude)) ORDER BY e.ordem_na_rota,e.id),'[]'::jsonb)
+   FROM public.entregas e JOIN public.clientes_enderecos c ON c.id=e.cliente_endereco_id AND c.empresa_id=e.empresa_id WHERE e.rota_id=target.id
+  ) WHERE id=target.id;
+ END IF;
+ -- Empty send containers are not another driver route.
+ UPDATE public.rotas_planejadas r SET status='concluida' WHERE r.empresa_id=f.empresa_id AND r.motorista_id=f.motorista_id AND r.id<>target.id AND r.status='planejada' AND EXISTS(SELECT 1 FROM public.pedidos_fluxo x WHERE x.lote_id=r.id) AND NOT EXISTS(SELECT 1 FROM public.entregas e WHERE e.rota_id=r.id);
+ RETURN jsonb_build_object('sucesso',true,'rota_id',target.id);
+END $$;
+
+-- Test phase: explicit manual confirmation. No GPS/geofence requirement is claimed.
+CREATE FUNCTION public.confirmar_retirada_pedidos(p_ids uuid[]) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE f public.pedidos_fluxo%ROWTYPE;
+BEGIN
+ IF auth.uid() IS NULL OR cardinality(p_ids) NOT BETWEEN 1 AND 500 THEN RAISE EXCEPTION 'Pedidos inválidos'; END IF;
+ SELECT * INTO f FROM public.pedidos_fluxo WHERE entrega_id=p_ids[1];
+ IF NOT FOUND OR public.fn_usuario_pode_operar_motorista(f.empresa_id,f.motorista_id) IS NOT TRUE OR NOT EXISTS(SELECT 1 FROM public.motoristas WHERE id=f.motorista_id AND empresa_id=f.empresa_id AND user_id=auth.uid()) THEN RAISE EXCEPTION 'Acesso negado'; END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(f.empresa_id::text||':'||f.motorista_id::text,0));
+ IF EXISTS(SELECT 1 FROM unnest(p_ids) requested(id) WHERE NOT EXISTS(SELECT 1 FROM public.pedidos_fluxo x JOIN public.entregas e ON e.id=x.entrega_id WHERE x.entrega_id=requested.id AND x.empresa_id=f.empresa_id AND x.motorista_id=f.motorista_id AND e.empresa_id=f.empresa_id AND e.motorista_id=f.motorista_id AND x.etapa IN ('aguardando_retirada','liberado'))) THEN RAISE EXCEPTION 'Pedido não aceito ou acesso negado'; END IF;
+ UPDATE public.pedidos_fluxo SET etapa='liberado',retirado_em=now() WHERE entrega_id=ANY(p_ids) AND etapa='aguardando_retirada';
+ RETURN jsonb_build_object('sucesso',true);
+END $$;
+
+CREATE FUNCTION public.fn_proteger_pedido_sem_retirada() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+BEGIN
+ IF (NEW.chegada_em IS DISTINCT FROM OLD.chegada_em OR (NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('entregue','tentativa_falha'))) AND EXISTS(SELECT 1 FROM public.pedidos_fluxo WHERE entrega_id=NEW.id AND etapa<>'liberado') THEN RAISE EXCEPTION 'Aceite o pedido e confirme a retirada antes de atender'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER proteger_pedido_sem_retirada BEFORE UPDATE ON public.entregas FOR EACH ROW EXECUTE FUNCTION public.fn_proteger_pedido_sem_retirada();
+REVOKE ALL ON FUNCTION public.enviar_pedidos_motorista(jsonb),public.aceitar_pedidos_motorista(uuid[]),public.confirmar_retirada_pedidos(uuid[]),public.fn_proteger_pedido_sem_retirada() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.enviar_pedidos_motorista(jsonb),public.aceitar_pedidos_motorista(uuid[]),public.confirmar_retirada_pedidos(uuid[]) TO authenticated;
+
+-- ------------------------------------------------------------------------------
 -- MÓDULO: supabase/functions-sql/reordenar_paradas_rota.sql
 -- ------------------------------------------------------------------------------
 
@@ -3730,7 +3972,8 @@ BEGIN
     FROM (
       SELECT id,status,ordem_na_rota,row_number() OVER (ORDER BY ordem_na_rota NULLS LAST,id)::integer AS pos
       FROM public.entregas WHERE rota_id=p_rota_id AND empresa_id=v_rota.empresa_id
-    ) x WHERE status NOT IN ('entregue','tentativa_falha','cancelada');
+    ) x WHERE status NOT IN ('entregue','tentativa_falha','cancelada')
+      AND NOT EXISTS(SELECT 1 FROM public.pedidos_fluxo f WHERE f.entrega_id=x.id AND f.etapa<>'liberado');
     IF p_ordem_esperada IS DISTINCT FROM v_current THEN
         RETURN jsonb_build_object('sucesso',false,'codigo','ORDEM_DESATUALIZADA','mensagem','A rota mudou. Atualize e organize novamente.');
     END IF;
@@ -3739,6 +3982,15 @@ BEGIN
           IS DISTINCT FROM (SELECT array_agg(id ORDER BY id) FROM unnest(v_current) id) THEN
         RETURN jsonb_build_object('sucesso',false,'mensagem','Informe todas as paradas pendentes, sem duplicar ou adicionar paradas.');
     END IF;
+    IF EXISTS(SELECT 1 FROM public.entregas e WHERE e.id=ANY(v_current) AND e.chegada_em IS NOT NULL AND e.id IS DISTINCT FROM p_entrega_ids[1]) THEN
+      RETURN jsonb_build_object('sucesso',false,'mensagem','Mantenha o atendimento em andamento na primeira posição.');
+    END IF;
+    IF EXISTS(SELECT 1 FROM public.entregas child JOIN public.entregas parent ON parent.id=child.coleta_origem_id AND parent.empresa_id=child.empresa_id
+      WHERE child.id=ANY(v_current) AND parent.status<>'entregue' AND
+      (array_position(p_entrega_ids,parent.id) IS NULL OR array_position(p_entrega_ids,parent.id)>=array_position(p_entrega_ids,child.id))) THEN
+      RETURN jsonb_build_object('sucesso',false,'mensagem','Conclua a coleta vinculada ou coloque-a antes da entrega.');
+    END IF;
+    PERFORM ec_private.validar_agenda(p_entrega_ids,p_configuracao->'agenda',(p_configuracao->>'planejamento_saida_em')::timestamptz,true);
     UPDATE public.entregas e SET ordem_na_rota=v_slots[requested.pos::integer],updated_at=now()
     FROM unnest(p_entrega_ids) WITH ORDINALITY AS requested(id,pos)
     WHERE e.id=requested.id AND e.rota_id=p_rota_id AND e.empresa_id=v_rota.empresa_id;
@@ -4208,6 +4460,10 @@ BEGIN
  IF company IS NULL OR driver IS NULL OR request_key IS NULL OR length(request_key) NOT BETWEEN 1 AND 80
  OR jsonb_typeof(p_dados->'paradas') IS DISTINCT FROM 'array' OR jsonb_array_length(p_dados->'paradas') NOT BETWEEN 1 AND 500 THEN
   RETURN jsonb_build_object('sucesso',false,'codigo','DADOS_INVALIDOS','mensagem','Informe motorista, chave de envio e de 1 a 500 paradas.');
+ END IF;
+ IF EXISTS(SELECT 1 FROM jsonb_array_elements(p_dados->'paradas') p WHERE
+   NULLIF(p->>'janela_data','') IS NOT NULL OR NULLIF(p->>'coleta_origem_id','') IS NOT NULL) THEN
+  RETURN jsonb_build_object('sucesso',false,'codigo','USE_ENVIO_PEDIDOS','mensagem','Envie pedidos com condições pelo fluxo de aceite do motorista.');
  END IF;
  -- Same request is serialized before checking its journal. Hash excludes volatile route/GPS metrics.
  PERFORM pg_advisory_xact_lock(hashtextextended(company::text||':envio:'||request_key,0));
@@ -4729,6 +4985,10 @@ BEGIN
         RETURN jsonb_build_object('sucesso', false, 'codigo', 'ACESSO_NEGADO', 'mensagem', 'Acesso de gestão obrigatório nesta empresa.');
     END IF;
 
+    IF p_dados ? 'whatsapp_cliente' AND NULLIF(p_dados->>'whatsapp_cliente','') IS NOT NULL AND p_dados->>'whatsapp_cliente' !~ '^[1-9][0-9]{9,14}$' THEN
+        RETURN jsonb_build_object('sucesso',false,'mensagem','WhatsApp inválido.');
+    END IF;
+
     -- 2. Extrai o nome/label aceitando qualquer variação enviada pelo frontend
     v_nome := TRIM(COALESCE(
         p_dados->>'nome_identificador',
@@ -4759,12 +5019,14 @@ BEGIN
     )), '');
 
     -- 5. Extrai coordenadas aceitando variações lat/lng e latitude/longitude
-    v_lat := (COALESCE(p_dados->>'latitude', p_dados->>'lat'))::NUMERIC;
-    v_lng := (COALESCE(p_dados->>'longitude', p_dados->>'lng'))::NUMERIC;
-
-    IF v_lat IS NULL OR v_lng IS NULL OR NOT (v_lat BETWEEN -90 AND 90) OR NOT (v_lng BETWEEN -180 AND 180) THEN
-        v_lat := -27.5954;
-        v_lng := -48.5480;
+    BEGIN
+        v_lat := (COALESCE(p_dados->>'latitude', p_dados->>'lat'))::NUMERIC;
+        v_lng := (COALESCE(p_dados->>'longitude', p_dados->>'lng'))::NUMERIC;
+    EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN
+        RETURN jsonb_build_object('sucesso',false,'codigo','COORDENADAS_INVALIDAS','mensagem','Selecione o endereço no mapa antes de salvar.');
+    END;
+    IF v_lat IS NULL OR v_lng IS NULL OR NOT (v_lat BETWEEN -90 AND 90) OR NOT (v_lng BETWEEN -180 AND 180) OR (v_lat=0 AND v_lng=0) THEN
+        RETURN jsonb_build_object('sucesso',false,'codigo','COORDENADAS_INVALIDAS','mensagem','Selecione o endereço no mapa antes de salvar.');
     END IF;
 
     v_place_id := NULLIF(TRIM(COALESCE(p_dados->>'place_id', p_dados->>'placeId')), '');
@@ -4792,6 +5054,7 @@ BEGIN
     IF v_id IS NOT NULL THEN
         UPDATE public.clientes_enderecos
         SET 
+            whatsapp_cliente = CASE WHEN p_dados ? 'whatsapp_cliente' THEN NULLIF(p_dados->>'whatsapp_cliente','') ELSE whatsapp_cliente END,
             nome_identificador = v_nome,
             endereco_completo = v_endereco,
             latitude = v_lat,
@@ -4814,6 +5077,7 @@ BEGIN
         IF v_registro.id IS NOT NULL THEN
             UPDATE public.clientes_enderecos
             SET 
+                whatsapp_cliente = CASE WHEN p_dados ? 'whatsapp_cliente' THEN NULLIF(p_dados->>'whatsapp_cliente','') ELSE whatsapp_cliente END,
                 latitude = v_lat,
                 longitude = v_lng,
                 place_id = COALESCE(v_place_id, place_id),
@@ -4827,6 +5091,7 @@ BEGIN
                 empresa_id,
                 nome_identificador,
                 destinatario_padrao,
+                whatsapp_cliente,
                 endereco_completo,
                 numero,
                 bairro,
@@ -4845,11 +5110,12 @@ BEGIN
                 v_empresa_id,
                 v_nome,
                 p_dados->>'destinatario_padrao',
+                NULLIF(p_dados->>'whatsapp_cliente',''),
                 v_endereco,
                 COALESCE(p_dados->>'numero', ''),
                 COALESCE(p_dados->>'bairro', ''),
-                COALESCE(p_dados->>'cidade', 'Florianópolis'),
-                COALESCE(p_dados->>'cep', '88000-000'),
+                COALESCE(p_dados->>'cidade', ''),
+                COALESCE(p_dados->>'cep', ''),
                 v_lat,
                 v_lng,
                 v_place_id,
@@ -5345,6 +5611,572 @@ REVOKE EXECUTE ON FUNCTION public.registrar_conclusao_entrega(UUID, BOOLEAN, TEX
 
 DROP FUNCTION IF EXISTS public.aprovar_solicitacao_motorista(UUID, UUID);
 REVOKE EXECUTE ON FUNCTION public.bootstrap_primeiro_gestor(TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+
+-- ------------------------------------------------------------------------------
+-- MÓDULO: supabase/modules-sql/09_customer_tracking.sql
+-- ------------------------------------------------------------------------------
+
+-- Customer arrival tracking. Tokens are bearer secrets; only their SHA-256 is stored.
+-- No direct access to the private table, including authenticated dashboard users.
+ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS whatsapp_cliente varchar(30);
+CREATE SCHEMA IF NOT EXISTS ec_private;
+REVOKE ALL ON SCHEMA ec_private FROM PUBLIC, anon, authenticated;
+CREATE TABLE IF NOT EXISTS ec_private.customer_tracking (
+ entrega_id uuid PRIMARY KEY REFERENCES public.entregas(id) ON DELETE CASCADE,
+ rota_id uuid NOT NULL, motorista_id uuid NOT NULL, token_hash bytea NOT NULL UNIQUE,
+ cliente_endereco_id uuid NOT NULL, recipient_phone text NOT NULL,
+ expires_at timestamptz NOT NULL DEFAULT now()+interval '8 hours',
+ latitude double precision, longitude double precision, observed_at timestamptz,
+ eta_at timestamptz, eta_observed_at timestamptz
+);
+ALTER TABLE ec_private.customer_tracking ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON ec_private.customer_tracking FROM PUBLIC, anon, authenticated;
+
+-- Also rechecked on EVERY public read: terminal status, reassignment, departure to
+-- another stop, membership suspension or route closure immediately hide all GPS.
+CREATE OR REPLACE FUNCTION ec_private.tracking_active(p_entrega uuid,p_rota uuid,p_motorista uuid)
+RETURNS boolean LANGUAGE sql STABLE SET search_path='' AS $$
+ SELECT EXISTS(
+  SELECT 1 FROM public.entregas e
+  JOIN public.rotas_planejadas r ON r.id=e.rota_id AND r.empresa_id=e.empresa_id AND r.motorista_id=e.motorista_id
+  JOIN public.motoristas m ON m.id=e.motorista_id AND m.empresa_id=e.empresa_id AND m.ativo
+  JOIN public.empresas c ON c.id=e.empresa_id AND c.ativa
+  JOIN public.empresa_membros em ON em.empresa_id=e.empresa_id AND em.user_id=m.user_id AND em.motorista_id=m.id AND em.status='aprovado' AND em.papel='motorista'
+  WHERE e.id=p_entrega AND e.rota_id=p_rota AND e.motorista_id=p_motorista
+   AND r.status='em_execucao' AND e.status NOT IN ('entregue','tentativa_falha','cancelada')
+   AND (e.coleta_origem_id IS NULL OR EXISTS(SELECT 1 FROM public.entregas p WHERE p.id=e.coleta_origem_id AND p.empresa_id=e.empresa_id AND p.status='entregue'))
+   AND NOT EXISTS(SELECT 1 FROM public.pedidos_fluxo f WHERE f.entrega_id=e.id AND f.etapa<>'liberado')
+   AND e.id=(SELECT x.id FROM public.entregas x WHERE x.rota_id=r.id AND x.empresa_id=r.empresa_id
+    AND x.status NOT IN ('entregue','tentativa_falha','cancelada')
+    AND (x.coleta_origem_id IS NULL OR EXISTS(SELECT 1 FROM public.entregas p WHERE p.id=x.coleta_origem_id AND p.empresa_id=x.empresa_id AND p.status='entregue'))
+    AND NOT EXISTS(SELECT 1 FROM public.pedidos_fluxo f WHERE f.entrega_id=x.id AND f.etapa<>'liberado')
+    ORDER BY (x.chegada_em IS NOT NULL) DESC,x.ordem_na_rota NULLS LAST,x.id LIMIT 1)
+ );
+$$;
+REVOKE ALL ON FUNCTION ec_private.tracking_active(uuid,uuid,uuid) FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION public.configurar_nome_empresa(p_empresa_id uuid,p_nome text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+BEGIN
+ IF auth.uid() IS NULL OR public.fn_usuario_e_gestor_empresa(p_empresa_id,auth.uid()) IS NOT TRUE THEN
+  RAISE EXCEPTION 'Acesso de gestão obrigatório nesta empresa.' USING ERRCODE='42501'; END IF;
+ IF p_nome IS NULL OR length(btrim(p_nome)) NOT BETWEEN 2 AND 120 THEN RAISE EXCEPTION 'Informe um nome entre 2 e 120 caracteres.'; END IF;
+ UPDATE public.empresas SET nome=btrim(p_nome) WHERE id=p_empresa_id;
+ RETURN jsonb_build_object('sucesso',true);
+END $$;
+
+CREATE OR REPLACE FUNCTION public.preparar_aviso_cliente(p_entrega_id uuid,p_token text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE e public.entregas%ROWTYPE; h bytea; t ec_private.customer_tracking%ROWTYPE; result jsonb;
+BEGIN
+ SELECT * INTO e FROM public.entregas WHERE id=p_entrega_id FOR UPDATE;
+ IF auth.uid() IS NULL OR NOT FOUND OR public.fn_usuario_pode_operar_motorista(e.empresa_id,e.motorista_id) IS NOT TRUE
+  OR NOT EXISTS(SELECT 1 FROM public.motoristas m WHERE m.id=e.motorista_id AND m.user_id=auth.uid())
+  OR ec_private.tracking_active(e.id,e.rota_id,e.motorista_id) IS NOT TRUE THEN
+  RAISE EXCEPTION 'Avise somente o próximo atendimento liberado da sua rota ativa.' USING ERRCODE='42501'; END IF;
+ IF p_token IS NULL OR p_token !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'Token inválido.'; END IF;
+ IF e.destinatario_telefone IS NULL OR e.destinatario_telefone !~ '^[1-9][0-9]{9,14}$' THEN RAISE EXCEPTION 'WhatsApp do cliente não cadastrado ou inválido.'; END IF;
+ h:=sha256(convert_to(p_token,'UTF8'));
+ SELECT * INTO t FROM ec_private.customer_tracking WHERE entrega_id=e.id;
+ IF t.token_hash=h AND (t.expires_at<=now() OR t.cliente_endereco_id IS DISTINCT FROM e.cliente_endereco_id OR t.recipient_phone IS DISTINCT FROM e.destinatario_telefone) THEN
+  RETURN jsonb_build_object('sucesso',false,'codigo','EXPIRADO','mensagem','Gere um novo link.'); END IF;
+ -- Repeated taps reuse the same valid link; a new device/token revokes the old one.
+ INSERT INTO ec_private.customer_tracking(entrega_id,rota_id,motorista_id,token_hash,cliente_endereco_id,recipient_phone)
+ VALUES(e.id,e.rota_id,e.motorista_id,h,e.cliente_endereco_id,e.destinatario_telefone)
+ ON CONFLICT(entrega_id) DO UPDATE SET rota_id=EXCLUDED.rota_id,motorista_id=EXCLUDED.motorista_id,
+ token_hash=EXCLUDED.token_hash,cliente_endereco_id=EXCLUDED.cliente_endereco_id,recipient_phone=EXCLUDED.recipient_phone,expires_at=now()+interval '8 hours',latitude=NULL,longitude=NULL,observed_at=NULL,eta_at=NULL,eta_observed_at=NULL
+ WHERE customer_tracking.token_hash<>EXCLUDED.token_hash OR customer_tracking.rota_id<>EXCLUDED.rota_id OR customer_tracking.motorista_id<>EXCLUDED.motorista_id OR customer_tracking.cliente_endereco_id<>EXCLUDED.cliente_endereco_id OR customer_tracking.recipient_phone<>EXCLUDED.recipient_phone;
+ SELECT jsonb_build_object('sucesso',true,'empresa_nome',c.nome,'motorista_nome',COALESCE(NULLIF(btrim(p.nome),''),m.nome),
+  'telefone',e.destinatario_telefone,'tipo_tarefa',e.tipo_tarefa,'descricao_outro',e.descricao_outro)
+ INTO result FROM public.empresas c JOIN public.motoristas m ON m.id=e.motorista_id LEFT JOIN public.perfis_usuarios p ON p.id=m.user_id WHERE c.id=e.empresa_id;
+ RETURN result;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.obter_meu_acompanhamento(p_rota_id uuid)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
+ SELECT COALESCE((SELECT jsonb_build_object('sucesso',true,'entrega_id',t.entrega_id,'latitude',a.latitude,'longitude',a.longitude)
+ FROM ec_private.customer_tracking t JOIN public.entregas e ON e.id=t.entrega_id
+ JOIN public.clientes_enderecos a ON a.id=e.cliente_endereco_id AND a.empresa_id=e.empresa_id
+ JOIN public.motoristas m ON m.id=t.motorista_id
+ WHERE t.rota_id=p_rota_id AND m.user_id=auth.uid() AND t.expires_at>now()
+ AND public.fn_usuario_pode_operar_motorista(e.empresa_id,e.motorista_id)
+ AND e.cliente_endereco_id=t.cliente_endereco_id AND e.destinatario_telefone=t.recipient_phone
+ AND ec_private.tracking_active(e.id,t.rota_id,t.motorista_id) LIMIT 1),'{"sucesso":false}'::jsonb);
+$$;
+
+CREATE OR REPLACE FUNCTION public.publicar_localizacao_acompanhamento(p_entrega_id uuid,p_latitude double precision,p_longitude double precision,p_observada_em timestamptz,p_previsao_chegada_em timestamptz DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+BEGIN
+ IF auth.uid() IS NULL OR p_latitude IS NULL OR p_longitude IS NULL
+ OR NOT(p_latitude BETWEEN -90 AND 90) OR NOT(p_longitude BETWEEN -180 AND 180)
+ OR p_observada_em IS NULL OR p_observada_em NOT BETWEEN now()-interval '2 minutes' AND now()+interval '30 seconds'
+ OR (p_previsao_chegada_em IS NOT NULL AND p_previsao_chegada_em NOT BETWEEN p_observada_em AND p_observada_em+interval '24 hours') THEN
+ RETURN jsonb_build_object('sucesso',false); END IF;
+ UPDATE ec_private.customer_tracking t SET latitude=p_latitude,longitude=p_longitude,observed_at=p_observada_em,
+ eta_at=COALESCE(p_previsao_chegada_em,t.eta_at),eta_observed_at=CASE WHEN p_previsao_chegada_em IS NULL THEN t.eta_observed_at ELSE p_observada_em END
+ FROM public.entregas e,public.motoristas m WHERE t.entrega_id=p_entrega_id AND e.id=t.entrega_id AND m.id=e.motorista_id AND m.user_id=auth.uid()
+ AND t.expires_at>now() AND (t.observed_at IS NULL OR p_observada_em>t.observed_at)
+ AND public.fn_usuario_pode_operar_motorista(e.empresa_id,e.motorista_id)
+ AND e.cliente_endereco_id=t.cliente_endereco_id AND e.destinatario_telefone=t.recipient_phone
+ AND ec_private.tracking_active(e.id,t.rota_id,t.motorista_id);
+ RETURN jsonb_build_object('sucesso',FOUND);
+END $$;
+
+CREATE OR REPLACE FUNCTION public.obter_acompanhamento_cliente(p_token text)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE t ec_private.customer_tracking%ROWTYPE; result jsonb;
+BEGIN
+ IF p_token IS NULL OR p_token !~ '^[0-9a-f]{64}$' THEN RETURN jsonb_build_object('estado','indisponivel'); END IF;
+ SELECT * INTO t FROM ec_private.customer_tracking WHERE token_hash=sha256(convert_to(p_token,'UTF8'));
+ IF NOT FOUND THEN RETURN jsonb_build_object('estado','indisponivel'); END IF;
+ IF t.expires_at<=now() OR ec_private.tracking_active(t.entrega_id,t.rota_id,t.motorista_id) IS NOT TRUE
+ OR NOT EXISTS(SELECT 1 FROM public.entregas e WHERE e.id=t.entrega_id AND e.cliente_endereco_id=t.cliente_endereco_id AND e.destinatario_telefone=t.recipient_phone) THEN
+  RETURN jsonb_build_object('estado','encerrado'); END IF;
+ SELECT jsonb_build_object('estado','ativo','empresa',c.nome,'tipo_tarefa',e.tipo_tarefa,
+  'destino',jsonb_build_object('latitude',a.latitude,'longitude',a.longitude),
+  'posicao',CASE WHEN t.observed_at IS NULL THEN NULL ELSE jsonb_build_object('latitude',t.latitude,'longitude',t.longitude) END,
+  'atualizada_em',t.observed_at,'previsao_chegada_em',t.eta_at,'previsao_atualizada_em',t.eta_observed_at,'servidor_em',now())
+ INTO result FROM public.entregas e JOIN public.empresas c ON c.id=e.empresa_id
+ JOIN public.clientes_enderecos a ON a.id=e.cliente_endereco_id AND a.empresa_id=e.empresa_id WHERE e.id=t.entrega_id;
+ RETURN COALESCE(result,jsonb_build_object('estado','indisponivel'));
+END $$;
+REVOKE ALL ON FUNCTION public.configurar_nome_empresa(uuid,text),public.preparar_aviso_cliente(uuid,text),public.obter_meu_acompanhamento(uuid),public.publicar_localizacao_acompanhamento(uuid,double precision,double precision,timestamptz,timestamptz),public.obter_acompanhamento_cliente(text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.configurar_nome_empresa(uuid,text),public.preparar_aviso_cliente(uuid,text),public.obter_meu_acompanhamento(uuid),public.publicar_localizacao_acompanhamento(uuid,double precision,double precision,timestamptz,timestamptz) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.obter_acompanhamento_cliente(text) TO anon,authenticated;
+
+-- ------------------------------------------------------------------------------
+-- MÓDULO: supabase/functions-sql/obter_comprovante_publico.sql
+-- ------------------------------------------------------------------------------
+
+-- Compatibility endpoint for authenticated operations. UUID alone is never public authorization.
+CREATE OR REPLACE FUNCTION public.obter_comprovante_publico(p_entrega_id uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE result jsonb;
+BEGIN
+ IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.' USING ERRCODE='42501'; END IF;
+ SELECT jsonb_build_object('sucesso',true,'entrega_id',cp.entrega_id,'destinatario_nome',e.destinatario_nome,
+  'endereco',COALESCE(to_jsonb(e)->>'endereco',a.endereco_completo),'empresa_nome',c.nome,
+  'recebedor_tipo',cp.recebedor_tipo,'recebedor_nome',cp.recebedor_nome,'observacao',cp.observacao,
+  'foto_path',cp.foto_path,'assinatura_path',cp.assinatura_path,'concluida_em',cp.concluida_em,'duracao_segundos',cp.duracao_segundos)
+ INTO result FROM public.entrega_comprovantes cp JOIN public.entregas e ON e.id=cp.entrega_id AND e.empresa_id=cp.empresa_id
+ JOIN public.empresas c ON c.id=cp.empresa_id LEFT JOIN public.clientes_enderecos a ON a.id=e.cliente_endereco_id AND a.empresa_id=e.empresa_id
+ WHERE cp.entrega_id=p_entrega_id AND public.fn_usuario_pode_operar_motorista(e.empresa_id,e.motorista_id) IS TRUE;
+ RETURN COALESCE(result,'{"sucesso":false}'::jsonb);
+END $$;
+REVOKE ALL ON FUNCTION public.obter_comprovante_publico(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.obter_comprovante_publico(uuid) TO authenticated;
+
+-- ------------------------------------------------------------------------------
+-- MÓDULO: supabase/modules-sql/10_receipt_sharing.sql
+-- ------------------------------------------------------------------------------
+
+-- A share is scoped to one immutable receipt; the bucket itself remains private.
+DROP POLICY IF EXISTS comprovante_publico_download ON storage.objects;
+UPDATE storage.buckets SET public=false WHERE id='entregas-comprovantes';
+CREATE SCHEMA IF NOT EXISTS ec_private;
+REVOKE ALL ON SCHEMA ec_private FROM PUBLIC,anon,authenticated;
+CREATE TABLE IF NOT EXISTS ec_private.receipt_shares (
+ entrega_id uuid PRIMARY KEY REFERENCES public.entrega_comprovantes(entrega_id) ON DELETE CASCADE,
+ empresa_id uuid NOT NULL REFERENCES public.empresas(id),
+ criado_por uuid NOT NULL REFERENCES auth.users(id),
+ token_hash bytea NOT NULL UNIQUE CHECK(octet_length(token_hash)=32),
+ expires_at timestamptz NOT NULL,
+ foto_url text, assinatura_url text
+);
+CREATE INDEX IF NOT EXISTS receipt_shares_empresa_idx ON ec_private.receipt_shares(empresa_id);
+CREATE INDEX IF NOT EXISTS receipt_shares_criado_por_idx ON ec_private.receipt_shares(criado_por);
+ALTER TABLE ec_private.receipt_shares ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON ec_private.receipt_shares FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION ec_private.receipt_url_matches(p_url text,p_path text) RETURNS boolean
+LANGUAGE sql IMMUTABLE SET search_path='' AS $$
+ SELECT COALESCE(p_url IS NOT NULL AND p_path IS NOT NULL AND length(p_url)<=8192
+  AND p_url ~ '^https://[a-zA-Z0-9.-]+(:[0-9]+)?/storage/v1/object/sign/entregas-comprovantes/'
+  AND split_part(split_part(p_url,'?',1),'/storage/v1/object/sign/entregas-comprovantes/',2)=p_path
+  AND p_url ~ '[?]token=[A-Za-z0-9_.-]+$',false);
+$$;
+REVOKE ALL ON FUNCTION ec_private.receipt_url_matches(text,text) FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION public.criar_compartilhamento_comprovante(
+ p_entrega_id uuid,p_token text,p_foto_url text DEFAULT NULL,p_assinatura_url text DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE cp public.entrega_comprovantes%ROWTYPE; e public.entregas%ROWTYPE; expires timestamptz;
+BEGIN
+ SELECT * INTO cp FROM public.entrega_comprovantes WHERE entrega_id=p_entrega_id FOR UPDATE;
+ IF auth.uid() IS NULL OR NOT FOUND OR public.fn_usuario_e_gestor_empresa(cp.empresa_id,auth.uid()) IS NOT TRUE THEN
+  RAISE EXCEPTION 'Apenas a gestão da empresa pode compartilhar este comprovante.' USING ERRCODE='42501'; END IF;
+ SELECT * INTO e FROM public.entregas WHERE id=cp.entrega_id AND empresa_id=cp.empresa_id;
+ IF NOT FOUND OR public.fn_usuario_pode_operar_motorista(e.empresa_id,e.motorista_id) IS NOT TRUE
+  OR e.status NOT IN ('entregue','tentativa_falha') THEN
+  RAISE EXCEPTION 'Comprovante indisponível para compartilhamento.' USING ERRCODE='42501'; END IF;
+ IF p_token IS NULL OR p_token !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'Token inválido.'; END IF;
+ IF (cp.foto_path IS NULL AND p_foto_url IS NOT NULL) OR (cp.foto_path IS NOT NULL AND NOT ec_private.receipt_url_matches(p_foto_url,cp.foto_path))
+  OR (cp.assinatura_path IS NULL AND p_assinatura_url IS NOT NULL) OR (cp.assinatura_path IS NOT NULL AND NOT ec_private.receipt_url_matches(p_assinatura_url,cp.assinatura_path)) THEN
+  RAISE EXCEPTION 'Gere as imagens temporárias deste comprovante antes de compartilhar.'; END IF;
+ expires:=clock_timestamp()+interval '55 minutes';
+ INSERT INTO ec_private.receipt_shares(entrega_id,empresa_id,criado_por,token_hash,expires_at,foto_url,assinatura_url)
+ VALUES(cp.entrega_id,cp.empresa_id,auth.uid(),sha256(convert_to(p_token,'UTF8')),expires,p_foto_url,p_assinatura_url)
+ ON CONFLICT(entrega_id) DO UPDATE SET criado_por=EXCLUDED.criado_por,token_hash=EXCLUDED.token_hash,expires_at=EXCLUDED.expires_at,
+ foto_url=EXCLUDED.foto_url,assinatura_url=EXCLUDED.assinatura_url;
+ RETURN jsonb_build_object('sucesso',true,'expira_em',expires,'servidor_em',clock_timestamp());
+END $$;
+REVOKE ALL ON FUNCTION public.criar_compartilhamento_comprovante(uuid,text,text,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.criar_compartilhamento_comprovante(uuid,text,text,text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.obter_comprovante_compartilhado(p_token text) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE result jsonb;
+BEGIN
+ IF p_token IS NULL OR p_token !~ '^[0-9a-f]{64}$' THEN RETURN '{"sucesso":false}'::jsonb; END IF;
+ SELECT jsonb_build_object('sucesso',true,'entrega_id',cp.entrega_id,'destinatario_nome',e.destinatario_nome,
+  'endereco',COALESCE(to_jsonb(e)->>'endereco',a.endereco_completo),'empresa_nome',c.nome,'tipo_tarefa',e.tipo_tarefa,
+  'recebedor_tipo',cp.recebedor_tipo,'recebedor_nome',cp.recebedor_nome,'observacao',cp.observacao,
+  'concluida_em',cp.concluida_em,'duracao_segundos',cp.duracao_segundos,
+  'foto_url',s.foto_url,'assinatura_url',s.assinatura_url,'expira_em',s.expires_at,'servidor_em',now()) INTO result
+ FROM ec_private.receipt_shares s
+ JOIN public.entrega_comprovantes cp ON cp.entrega_id=s.entrega_id AND cp.empresa_id=s.empresa_id
+ JOIN public.entregas e ON e.id=cp.entrega_id AND e.empresa_id=cp.empresa_id AND e.status IN ('entregue','tentativa_falha')
+ JOIN public.empresas c ON c.id=s.empresa_id AND c.ativa
+ LEFT JOIN public.clientes_enderecos a ON a.id=e.cliente_endereco_id AND a.empresa_id=e.empresa_id
+ WHERE s.token_hash=sha256(convert_to(p_token,'UTF8')) AND s.expires_at>now()
+  AND public.fn_usuario_e_gestor_empresa(s.empresa_id,s.criado_por) IS TRUE
+  AND (cp.foto_path IS NULL AND s.foto_url IS NULL OR ec_private.receipt_url_matches(s.foto_url,cp.foto_path))
+  AND (cp.assinatura_path IS NULL AND s.assinatura_url IS NULL OR ec_private.receipt_url_matches(s.assinatura_url,cp.assinatura_path));
+ RETURN COALESCE(result,'{"sucesso":false}'::jsonb);
+END $$;
+REVOKE ALL ON FUNCTION public.obter_comprovante_compartilhado(text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.obter_comprovante_compartilhado(text) TO anon,authenticated;
+
+CREATE OR REPLACE FUNCTION public.revogar_compartilhamento_comprovante(p_entrega_id uuid) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE company uuid;
+BEGIN
+ SELECT empresa_id INTO company FROM public.entrega_comprovantes WHERE entrega_id=p_entrega_id;
+ IF auth.uid() IS NULL OR NOT FOUND OR public.fn_usuario_e_gestor_empresa(company,auth.uid()) IS NOT TRUE THEN
+  RAISE EXCEPTION 'Acesso de gestão obrigatório nesta empresa.' USING ERRCODE='42501'; END IF;
+ DELETE FROM ec_private.receipt_shares WHERE entrega_id=p_entrega_id AND empresa_id=company;
+ RETURN '{"sucesso":true}'::jsonb;
+END $$;
+REVOKE ALL ON FUNCTION public.revogar_compartilhamento_comprovante(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.revogar_compartilhamento_comprovante(uuid) TO authenticated;
+
+-- ------------------------------------------------------------------------------
+-- MÓDULO: supabase/modules-sql/11_company_trial.sql
+-- ------------------------------------------------------------------------------
+
+-- Company provisioning is atomic. Subscription dates and limits are server-owned.
+CREATE SCHEMA IF NOT EXISTS ec_private;
+REVOKE ALL ON SCHEMA ec_private FROM PUBLIC,anon,authenticated;
+CREATE TABLE IF NOT EXISTS ec_private.assinaturas_empresas (
+ empresa_id uuid PRIMARY KEY REFERENCES public.empresas(id) ON DELETE CASCADE,
+ titular_id uuid UNIQUE REFERENCES auth.users(id) ON DELETE SET NULL,
+ teste_inicio timestamptz NOT NULL DEFAULT now(),
+ teste_fim timestamptz NOT NULL DEFAULT (now()+interval '30 days'),
+ pago_ate timestamptz,
+ suspensa boolean NOT NULL DEFAULT false,
+ ambiente_pagamento text NOT NULL DEFAULT 'production' CHECK(ambiente_pagamento IN ('test','production')),
+ valor_mensal numeric(10,2) NOT NULL DEFAULT 149.90 CHECK(valor_mensal=149.90),
+ limite_motoristas integer NOT NULL DEFAULT 3 CHECK(limite_motoristas=3),
+ limite_atendimentos integer NOT NULL DEFAULT 1000 CHECK(limite_atendimentos=1000),
+ CHECK(teste_fim=teste_inicio+interval '30 days')
+);
+CREATE TABLE IF NOT EXISTS ec_private.uso_plano (
+ empresa_id uuid NOT NULL REFERENCES ec_private.assinaturas_empresas(empresa_id) ON DELETE CASCADE,
+ mes date NOT NULL, atendimentos integer NOT NULL DEFAULT 0 CHECK(atendimentos>=0),
+ PRIMARY KEY(empresa_id,mes)
+);
+ALTER TABLE ec_private.assinaturas_empresas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ec_private.uso_plano ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON ec_private.assinaturas_empresas,ec_private.uso_plano FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION ec_private.empresa_assinatura_liberada(p_empresa_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
+ SELECT NOT EXISTS(SELECT 1 FROM ec_private.assinaturas_empresas a WHERE a.empresa_id=p_empresa_id)
+ OR EXISTS(SELECT 1 FROM ec_private.assinaturas_empresas a WHERE a.empresa_id=p_empresa_id
+  AND NOT a.suspensa AND greatest(a.teste_fim,a.pago_ate)>now());
+$$;
+REVOKE ALL ON FUNCTION ec_private.empresa_assinatura_liberada(uuid) FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION public.iniciar_teste_empresa(p_nome_empresa text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE u auth.users%ROWTYPE; m public.empresa_membros%ROWTYPE; company uuid; company_name text;
+BEGIN
+ IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Entre na sua conta.' USING ERRCODE='42501'; END IF;
+ SELECT * INTO u FROM auth.users WHERE id=auth.uid() FOR UPDATE;
+ IF NOT FOUND OR u.email_confirmed_at IS NULL OR coalesce(u.is_anonymous,false) THEN
+  RAISE EXCEPTION 'Confirme seu e-mail para iniciar o teste grátis.' USING ERRCODE='42501'; END IF;
+ -- The auth.users row lock serializes retries and simultaneous first logins.
+ SELECT * INTO m FROM public.empresa_membros WHERE user_id=u.id ORDER BY created_at DESC,id LIMIT 1;
+ IF FOUND THEN
+  IF m.status<>'aprovado' OR m.papel NOT IN ('admin','gestor') THEN
+   RAISE EXCEPTION 'Sua conta já possui um vínculo empresarial. Consulte a gestão.' USING ERRCODE='42501'; END IF;
+  RETURN jsonb_build_object('sucesso',true,'empresa_id',m.empresa_id,'existente',true);
+ END IF;
+ IF EXISTS(SELECT 1 FROM public.solicitacoes_acesso WHERE user_id=u.id) THEN
+  RAISE EXCEPTION 'Sua conta já possui uma solicitação de acesso. Consulte a gestão.' USING ERRCODE='42501'; END IF;
+ IF EXISTS(SELECT 1 FROM ec_private.assinaturas_empresas WHERE titular_id=u.id) THEN
+  RAISE EXCEPTION 'O teste desta conta já foi utilizado.' USING ERRCODE='42501'; END IF;
+ -- User metadata supplies display text only; never a role, company id or validity.
+ company_name:=btrim(coalesce(p_nome_empresa,u.raw_user_meta_data->>'empresa_nome',''));
+ IF length(company_name) NOT BETWEEN 2 AND 120 THEN
+  RAISE EXCEPTION 'Informe o nome da empresa entre 2 e 120 caracteres.' USING ERRCODE='22023'; END IF;
+ INSERT INTO public.empresas(nome,codigo_convite,ativa)
+ VALUES(company_name,'EC-'||upper(replace(gen_random_uuid()::text,'-','')),true) RETURNING id INTO company;
+ INSERT INTO public.perfis_usuarios(id,email,nome)
+ VALUES(u.id,u.email,coalesce(nullif(btrim(u.raw_user_meta_data->>'full_name'),''),nullif(btrim(u.raw_user_meta_data->>'name'),''),'Gestor'))
+ ON CONFLICT(id) DO NOTHING;
+ INSERT INTO public.empresa_membros(empresa_id,user_id,papel,status,aprovado_em)
+ VALUES(company,u.id,'admin','aprovado',now());
+ INSERT INTO ec_private.assinaturas_empresas(empresa_id,titular_id) VALUES(company,u.id);
+ RETURN jsonb_build_object('sucesso',true,'empresa_id',company,'existente',false,'teste_fim',now()+interval '30 days');
+END;
+$$;
+REVOKE ALL ON FUNCTION public.iniciar_teste_empresa(text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.iniciar_teste_empresa(text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.obter_minha_assinatura(p_empresa_id uuid)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE a ec_private.assinaturas_empresas%ROWTYPE; used integer; active_drivers integer;
+BEGIN
+ IF auth.uid() IS NULL OR NOT EXISTS(SELECT 1 FROM public.empresa_membros m WHERE m.empresa_id=p_empresa_id
+  AND m.user_id=auth.uid() AND m.status='aprovado') THEN
+  RAISE EXCEPTION 'Acesso negado a esta empresa.' USING ERRCODE='42501'; END IF;
+ SELECT * INTO a FROM ec_private.assinaturas_empresas WHERE empresa_id=p_empresa_id;
+ IF NOT FOUND THEN RETURN jsonb_build_object('legado',true,'operacional',true,'servidor_em',now()); END IF;
+ SELECT coalesce(atendimentos,0) INTO used FROM ec_private.uso_plano
+ WHERE empresa_id=p_empresa_id AND mes=date_trunc('month',now() AT TIME ZONE 'America/Sao_Paulo')::date;
+ SELECT count(*) INTO active_drivers FROM public.motoristas WHERE empresa_id=p_empresa_id AND ativo;
+ RETURN jsonb_build_object('legado',false,'operacional',ec_private.empresa_assinatura_liberada(p_empresa_id),
+  'estado',CASE WHEN a.suspensa THEN 'suspensa' WHEN a.pago_ate>now() THEN 'ativa' WHEN a.teste_fim>now() THEN 'teste' ELSE 'expirada' END,
+  'teste_fim',a.teste_fim,'pago_ate',a.pago_ate,'servidor_em',now(),
+  'dias_restantes',greatest(0,ceil(extract(epoch FROM (greatest(a.teste_fim,a.pago_ate)-now()))/86400)),
+  'valor_mensal',a.valor_mensal,'limite_motoristas',a.limite_motoristas,'limite_atendimentos',a.limite_atendimentos,
+  'atendimentos_mes',coalesce(used,0),'motoristas_ativos',active_drivers);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.obter_minha_assinatura(uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.obter_minha_assinatura(uuid) TO authenticated;
+
+-- A trigger also guards SECURITY DEFINER RPCs, so an old APK cannot bypass expiry.
+CREATE OR REPLACE FUNCTION ec_private.proteger_operacao_assinatura()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE company uuid; a ec_private.assinaturas_empresas%ROWTYPE; current_count integer;
+BEGIN
+ IF TG_TABLE_NAME='historico_atendimentos' THEN
+  SELECT empresa_id INTO company FROM public.entregas WHERE id=coalesce(to_jsonb(NEW)->>'entrega_id',to_jsonb(OLD)->>'entrega_id')::uuid;
+ ELSE
+  company:=coalesce(to_jsonb(NEW)->>'empresa_id',to_jsonb(OLD)->>'empresa_id')::uuid;
+ END IF;
+ IF TG_OP='UPDATE' AND (to_jsonb(NEW)->>'empresa_id') IS DISTINCT FROM (to_jsonb(OLD)->>'empresa_id') THEN
+  RAISE EXCEPTION 'Não é permitido transferir registros entre empresas.' USING ERRCODE='42501'; END IF;
+ SELECT * INTO a FROM ec_private.assinaturas_empresas WHERE empresa_id=company FOR UPDATE;
+ -- Existing companies retain their current operation; no retroactive trial or reset.
+ IF NOT FOUND OR auth.uid() IS NULL THEN
+  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+ END IF;
+ IF NOT ec_private.empresa_assinatura_liberada(company) THEN
+  RAISE EXCEPTION 'Seu período de acesso terminou. Assine o plano para continuar operando.' USING ERRCODE='42501'; END IF;
+ IF TG_TABLE_NAME='motoristas' AND TG_OP<>'DELETE' THEN
+  IF NEW.ativo THEN
+  SELECT count(*) INTO current_count FROM public.motoristas WHERE empresa_id=company AND ativo AND id<>NEW.id;
+  IF current_count>=a.limite_motoristas THEN
+   RAISE EXCEPTION 'O plano permite até 3 motoristas ativos.' USING ERRCODE='23514'; END IF;
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$$;
+CREATE OR REPLACE FUNCTION ec_private.contar_atendimento_plano()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE cap integer; total integer;
+BEGIN
+ SELECT limite_atendimentos INTO cap FROM ec_private.assinaturas_empresas WHERE empresa_id=NEW.empresa_id FOR UPDATE;
+ IF FOUND THEN
+  INSERT INTO ec_private.uso_plano(empresa_id,mes,atendimentos)
+  VALUES(NEW.empresa_id,date_trunc('month',now() AT TIME ZONE 'America/Sao_Paulo')::date,1)
+  ON CONFLICT(empresa_id,mes) DO UPDATE SET atendimentos=ec_private.uso_plano.atendimentos+1
+  RETURNING atendimentos INTO total;
+  IF total>cap THEN RAISE EXCEPTION 'O plano permite até 1.000 atendimentos por mês.' USING ERRCODE='23514'; END IF;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION ec_private.proteger_operacao_assinatura(),ec_private.contar_atendimento_plano() FROM PUBLIC,anon,authenticated;
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY ARRAY['motoristas','clientes_enderecos','rotas_planejadas','entregas','entrega_comprovantes','pedidos_fluxo','empresa_membros','veiculos_motoristas','veiculos_documentos','historico_atendimentos'] LOOP
+  EXECUTE format('DROP TRIGGER IF EXISTS assinatura_operacional ON public.%I',t);
+  EXECUTE format('CREATE TRIGGER assinatura_operacional BEFORE INSERT OR UPDATE OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION ec_private.proteger_operacao_assinatura()',t);
+ END LOOP;
+END $$;
+DROP TRIGGER IF EXISTS assinatura_cota_atendimentos ON public.entregas;
+CREATE TRIGGER assinatura_cota_atendimentos AFTER INSERT ON public.entregas FOR EACH ROW EXECUTE FUNCTION ec_private.contar_atendimento_plano();
+
+-- Remove legacy permissive policies: a permissive USING(true) defeats other RLS.
+DROP POLICY IF EXISTS "Acesso empresas" ON public.empresas;
+DROP POLICY IF EXISTS "Acesso membros" ON public.empresa_membros;
+DROP POLICY IF EXISTS "Acesso perfis" ON public.perfis_usuarios;
+DROP POLICY IF EXISTS "Acesso total a motoristas para membros da empresa" ON public.motoristas;
+DROP POLICY IF EXISTS "Acesso a entregas para autenticados" ON public.entregas;
+DROP POLICY IF EXISTS "Acesso a rotas para autenticados" ON public.rotas_planejadas;
+DROP POLICY IF EXISTS "Acesso a clientes enderecos para autenticados" ON public.clientes_enderecos;
+DROP POLICY IF EXISTS "Permitir exclusao de enderecos" ON public.clientes_enderecos;
+DROP POLICY IF EXISTS "Usuarios visualizam empresas das quais sao membros" ON public.empresas;
+CREATE POLICY "Usuarios visualizam empresas das quais sao membros" ON public.empresas FOR SELECT TO authenticated
+USING(EXISTS(SELECT 1 FROM public.empresa_membros m WHERE m.empresa_id=empresas.id AND m.user_id=(SELECT auth.uid())));
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY ARRAY['empresas','perfis_usuarios','empresa_membros','solicitacoes_acesso','auditoria_acessos','motoristas','veiculos_motoristas','veiculos_documentos','clientes_enderecos','rotas_planejadas','entregas','historico_atendimentos','storage_limpeza_fila'] LOOP
+  EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC,anon,authenticated',t);
+  EXECUTE format('GRANT SELECT ON public.%I TO authenticated',t);
+ END LOOP;
+END $$;
+GRANT UPDATE(nome,telefone,avatar_url) ON public.perfis_usuarios TO authenticated;
+-- Keep the existing headquarters-city preference writable by its own manager.
+GRANT UPDATE(cidade) ON public.empresas TO authenticated;
+DROP POLICY IF EXISTS "Gestao configura cidade da propria empresa" ON public.empresas;
+CREATE POLICY "Gestao configura cidade da propria empresa" ON public.empresas FOR UPDATE TO authenticated
+USING(public.fn_usuario_e_gestor_empresa(id,auth.uid()))
+WITH CHECK(public.fn_usuario_e_gestor_empresa(id,auth.uid()));
+DO $$ DECLARE f record; BEGIN
+ FOR f IN SELECT p.oid::regprocedure AS signature, p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  WHERE n.nspname='public' AND p.prosecdef AND has_function_privilege('anon',p.oid,'EXECUTE')
+   AND p.proname NOT IN ('obter_acompanhamento_cliente','obter_comprovante_compartilhado') LOOP
+  EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC,anon',f.signature);
+  IF f.proname NOT IN ('rls_auto_enable','bootstrap_primeiro_gestor') THEN EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO authenticated',f.signature); END IF;
+ END LOOP;
+END $$;
+
+-- The old manual bootstrap is maintenance-only; it can self-approve an admin.
+REVOKE ALL ON FUNCTION public.bootstrap_primeiro_gestor(text,text,text) FROM PUBLIC,anon,authenticated;
+
+-- Operational driver RPCs stop when the trial ends, including public tracking.
+CREATE OR REPLACE FUNCTION public.fn_usuario_pode_operar_motorista(
+    p_empresa_id UUID, p_motorista_id UUID
+)
+RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public
+AS $$
+    SELECT auth.uid() IS NOT NULL AND ec_private.empresa_assinatura_liberada(p_empresa_id) AND EXISTS (
+        SELECT 1 FROM public.motoristas m
+        JOIN public.empresas e ON e.id = m.empresa_id AND e.ativa = TRUE
+        JOIN public.veiculos_motoristas vm ON vm.user_id = m.user_id AND vm.empresa_id = m.empresa_id
+        WHERE m.id = p_motorista_id AND m.empresa_id = p_empresa_id AND m.ativo = TRUE
+          AND vm.status_analise = 'aprovado'
+          AND (public.fn_validar_completude_veiculo(vm.id)->>'valido')::boolean IS TRUE
+          AND (public.fn_usuario_e_gestor_empresa(p_empresa_id, auth.uid()) IS TRUE OR (
+              m.user_id = auth.uid() AND EXISTS (
+                  SELECT 1 FROM public.empresa_membros em
+                  WHERE em.empresa_id = p_empresa_id AND em.user_id = auth.uid()
+                    AND em.motorista_id = m.id AND em.papel = 'motorista' AND em.status = 'aprovado'
+              )
+          ))
+    );
+$$;
+
+-- ------------------------------------------------------------------------------
+-- MÓDULO: supabase/modules-sql/12_subscription_payments.sql
+-- ------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS ec_private.checkouts_assinatura (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ empresa_id uuid NOT NULL UNIQUE REFERENCES ec_private.assinaturas_empresas(empresa_id) ON DELETE CASCADE,
+ preapproval_id text UNIQUE, url text, criado_em timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS ec_private.pagamentos_assinatura (
+ pagamento_id text PRIMARY KEY,
+ checkout_id uuid NOT NULL REFERENCES ec_private.checkouts_assinatura(id),
+ status text NOT NULL, aprovado_em timestamptz, atualizado_em timestamptz NOT NULL,
+ cobertura_ate timestamptz, valor numeric(10,2) NOT NULL CHECK(valor=149.90)
+);
+ALTER TABLE ec_private.checkouts_assinatura ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ec_private.pagamentos_assinatura ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON ec_private.checkouts_assinatura,ec_private.pagamentos_assinatura FROM PUBLIC,anon,authenticated;
+
+CREATE OR REPLACE FUNCTION public.preparar_checkout_assinatura(p_empresa_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE a ec_private.assinaturas_empresas%ROWTYPE; c ec_private.checkouts_assinatura%ROWTYPE; email text;
+BEGIN
+ IF auth.uid() IS NULL OR public.fn_usuario_e_gestor_empresa(p_empresa_id,auth.uid()) IS NOT TRUE THEN
+  RAISE EXCEPTION 'Acesso de gestão obrigatório.' USING ERRCODE='42501'; END IF;
+ SELECT * INTO a FROM ec_private.assinaturas_empresas WHERE empresa_id=p_empresa_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Esta empresa não possui uma assinatura comercial.' USING ERRCODE='22023'; END IF;
+ IF a.teste_fim>now() OR a.pago_ate>now() THEN RAISE EXCEPTION 'Seu período de acesso ainda está ativo.' USING ERRCODE='22023'; END IF;
+ SELECT u.email INTO email FROM auth.users u WHERE u.id=auth.uid() AND u.email_confirmed_at IS NOT NULL;
+ IF email IS NULL THEN RAISE EXCEPTION 'Confirme seu e-mail.' USING ERRCODE='42501'; END IF;
+ INSERT INTO ec_private.checkouts_assinatura(empresa_id) VALUES(p_empresa_id) ON CONFLICT(empresa_id) DO NOTHING;
+ SELECT * INTO c FROM ec_private.checkouts_assinatura WHERE empresa_id=p_empresa_id;
+ RETURN jsonb_build_object('id',c.id,'email',email,'url',c.url,'preapproval_id',c.preapproval_id,'valor',a.valor_mensal,'ambiente',a.ambiente_pagamento);
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.vincular_checkout_assinatura(p_checkout_id uuid,p_preapproval_id text,p_url text)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'Operação exclusiva do servidor.' USING ERRCODE='42501'; END IF;
+ IF p_checkout_id IS NULL OR p_preapproval_id IS NULL OR p_url IS NULL OR p_preapproval_id !~ '^[A-Za-z0-9_-]{1,100}$' OR p_url !~ '^https://(www\.)?mercadopago\.com\.br/' THEN
+  RAISE EXCEPTION 'Resposta de checkout inválida.' USING ERRCODE='22023'; END IF;
+ UPDATE ec_private.checkouts_assinatura SET preapproval_id=p_preapproval_id,url=p_url
+ WHERE id=p_checkout_id AND (preapproval_id IS NULL OR preapproval_id=p_preapproval_id);
+ RETURN FOUND;
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.registrar_pagamento_assinatura(
+ p_checkout_id uuid,p_preapproval_id text,p_pagamento_id text,p_status text,p_valor numeric,
+ p_moeda text,p_aprovado_em timestamptz,p_atualizado_em timestamptz,p_ambiente text DEFAULT 'production')
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE c ec_private.checkouts_assinatura%ROWTYPE; a ec_private.assinaturas_empresas%ROWTYPE;
+ payment ec_private.pagamentos_assinatura%ROWTYPE; coverage timestamptz;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'Operação exclusiva do servidor.' USING ERRCODE='42501'; END IF;
+ IF p_valor IS DISTINCT FROM 149.90 OR p_moeda IS DISTINCT FROM 'BRL'
+  OR p_pagamento_id IS NULL OR p_pagamento_id !~ '^[0-9]{1,30}$'
+  OR p_status IS NULL OR p_status NOT IN ('approved','pending','in_process','rejected','cancelled','refunded','charged_back')
+  OR p_atualizado_em IS NULL OR p_atualizado_em>now()+interval '5 minutes' THEN
+  RAISE EXCEPTION 'Pagamento incompatível com o plano.' USING ERRCODE='22023'; END IF;
+ SELECT * INTO c FROM ec_private.checkouts_assinatura WHERE id=p_checkout_id AND preapproval_id=p_preapproval_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Assinatura não vinculada a esta empresa.' USING ERRCODE='42501'; END IF;
+ SELECT * INTO a FROM ec_private.assinaturas_empresas WHERE empresa_id=c.empresa_id FOR UPDATE;
+ IF p_ambiente IS DISTINCT FROM a.ambiente_pagamento THEN
+  RAISE EXCEPTION 'O ambiente do pagamento não corresponde ao cadastro.' USING ERRCODE='42501'; END IF;
+ SELECT * INTO payment FROM ec_private.pagamentos_assinatura WHERE pagamento_id=p_pagamento_id;
+ IF FOUND THEN
+  IF payment.checkout_id<>c.id THEN RAISE EXCEPTION 'Pagamento já vinculado a outro cadastro.' USING ERRCODE='42501'; END IF;
+  IF payment.atualizado_em>=p_atualizado_em THEN RETURN true; END IF;
+  coverage:=payment.cobertura_ate;
+ END IF;
+ IF p_status='approved' THEN
+  IF p_aprovado_em IS NULL OR p_aprovado_em>now()+interval '5 minutes' THEN
+   RAISE EXCEPTION 'Confirmação de pagamento inválida.' USING ERRCODE='22023'; END IF;
+  IF coverage IS NULL THEN coverage:=greatest(p_aprovado_em,a.pago_ate,a.teste_fim)+interval '1 month'; END IF;
+ END IF;
+ INSERT INTO ec_private.pagamentos_assinatura(pagamento_id,checkout_id,status,aprovado_em,atualizado_em,cobertura_ate,valor)
+ VALUES(p_pagamento_id,c.id,p_status,p_aprovado_em,p_atualizado_em,coverage,p_valor)
+ ON CONFLICT(pagamento_id) DO UPDATE SET status=excluded.status,aprovado_em=excluded.aprovado_em,
+  atualizado_em=excluded.atualizado_em,cobertura_ate=excluded.cobertura_ate;
+ UPDATE ec_private.assinaturas_empresas SET
+  pago_ate=(SELECT max(p.cobertura_ate) FROM ec_private.pagamentos_assinatura p
+   JOIN ec_private.checkouts_assinatura x ON x.id=p.checkout_id WHERE x.empresa_id=c.empresa_id AND p.status='approved'),
+  suspensa=EXISTS(SELECT 1 FROM ec_private.pagamentos_assinatura p JOIN ec_private.checkouts_assinatura x ON x.id=p.checkout_id
+   WHERE x.empresa_id=c.empresa_id AND p.status='charged_back')
+ WHERE empresa_id=c.empresa_id;
+ RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.preparar_checkout_assinatura(uuid),public.vincular_checkout_assinatura(uuid,text,text),
+ public.registrar_pagamento_assinatura(uuid,text,text,text,numeric,text,timestamptz,timestamptz,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.preparar_checkout_assinatura(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.vincular_checkout_assinatura(uuid,text,text),
+ public.registrar_pagamento_assinatura(uuid,text,text,text,numeric,text,timestamptz,timestamptz,text) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.obter_contexto_pagamento_assinatura(p_pagamento_id text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE result jsonb;
+BEGIN
+ IF auth.role() IS DISTINCT FROM 'service_role' THEN RAISE EXCEPTION 'Operação exclusiva do servidor.' USING ERRCODE='42501'; END IF;
+ SELECT jsonb_build_object('checkout_id',c.id,'preapproval_id',c.preapproval_id) INTO result
+ FROM ec_private.pagamentos_assinatura p JOIN ec_private.checkouts_assinatura c ON c.id=p.checkout_id WHERE p.pagamento_id=p_pagamento_id;
+ RETURN result;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.obter_contexto_pagamento_assinatura(text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.obter_contexto_pagamento_assinatura(text) TO service_role;
 
 -- ------------------------------------------------------------------------------
 -- PUBLICAÇÃO REALTIME

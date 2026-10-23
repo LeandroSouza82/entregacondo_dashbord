@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
-import { requireCompanyId } from '../../../lib/company';
+import { requireCompanyId, hasActiveSupabaseSession } from '../../../lib/company';
 import type { ClienteEnderecoItem, NovoClienteEnderecoPayload } from '../types/clienteEndereco';
 import { salvarClienteEndereco } from './salvarClienteEndereco';
 
@@ -27,6 +27,10 @@ export async function buscarEnderecosNoBanco(
   }
 
   try {
+    if (!(await hasActiveSupabaseSession())) {
+      return [];
+    }
+
     let resolvedId = empresaId;
     if (!resolvedId && typeof window !== 'undefined') {
       resolvedId = localStorage.getItem('ec_active_company_id') || undefined;
@@ -72,6 +76,10 @@ export async function verificarEnderecoJaSalvo(
   }
 
   try {
+    if (!(await hasActiveSupabaseSession())) {
+      return null;
+    }
+
     let resolvedId = empresaId;
     if (!resolvedId && typeof window !== 'undefined') {
       resolvedId = localStorage.getItem('ec_active_company_id') || undefined;

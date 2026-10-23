@@ -33,7 +33,7 @@ export const ListaSolicitacoes: React.FC<ListaSolicitacoesProps> = ({
   onVerDocumentos,
 }) => {
   return (
-    <div className="bg-white border border-[#E1E6ED] rounded-2xl shadow-card overflow-hidden">
+    <div className="bg-white border border-gray-300 rounded-2xl shadow-card overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs border-collapse">
           <thead>

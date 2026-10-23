@@ -20,7 +20,7 @@ export const KPICard: React.FC<KPICardProps> = ({
   valueColor = 'text-[#0F1B2D]',
 }) => {
   return (
-    <div className="bg-white border border-[#E1E6ED] rounded-[14px] p-[18px] flex flex-col gap-1.5 shadow-card transition-all hover:border-slate-300">
+    <div className="bg-white border border-gray-300 rounded-[14px] p-[18px] flex flex-col gap-1.5 shadow-card transition-all hover:border-slate-400">
       <div className="text-[13px] font-semibold text-[#516074]">
         {label}
       </div>

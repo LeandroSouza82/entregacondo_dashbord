@@ -2,8 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {insertCollections} from '../src/features/routes/services/collectionInsertion.ts';
 import {collectionRoadCosts} from '../src/features/routes/services/collectionRoadCosts.ts';
-import {dispatchDriverServices} from '../src/features/routes/services/dispatchDriverServices.ts';
+import {dispatchDriverServices,dispatchDriverOrders} from '../src/features/routes/services/dispatchDriverServices.ts';
 const costs = [[0,40,70,2],[20,0,20,80],[30,20,0,80],[30,2,20,0]];
+test('new batch uses offer RPC and preserves individual notes without requiring driver GPS',async()=>{
+ const batch={empresa_id:'company',motorista_id:'driver',idempotency_key:'offer',paradas:[{tipo_tarefa:'entrega',observacoes_gestor:'Zelador'},{tipo_tarefa:'coleta',observacoes_gestor:'Portão lateral'}]};
+ const client={rpc:async(name,args)=>{assert.equal(name,'enviar_pedidos_motorista');assert.deepEqual(args.p_dados,batch);return {data:{sucesso:true,mensagem:'enviado'}};},from(){throw Error('offer must not require active route GPS');}};
+ assert.equal((await dispatchDriverOrders(client,batch)).sucesso,true);
+});
 test('road insertion puts nearby collection first without changing old order',()=>{
  const old=[1,2]; assert.deepEqual(insertCollections(old,[3],costs),[3,1,2]);assert.deepEqual(old,[1,2]);
 });

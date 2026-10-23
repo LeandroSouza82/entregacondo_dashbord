@@ -50,7 +50,8 @@ BEGIN
     FROM (
       SELECT id,status,ordem_na_rota,row_number() OVER (ORDER BY ordem_na_rota NULLS LAST,id)::integer AS pos
       FROM public.entregas WHERE rota_id=p_rota_id AND empresa_id=v_rota.empresa_id
-    ) x WHERE status NOT IN ('entregue','tentativa_falha','cancelada');
+    ) x WHERE status NOT IN ('entregue','tentativa_falha','cancelada')
+      AND NOT EXISTS(SELECT 1 FROM public.pedidos_fluxo f WHERE f.entrega_id=x.id AND f.etapa<>'liberado');
     IF p_ordem_esperada IS DISTINCT FROM v_current THEN
         RETURN jsonb_build_object('sucesso',false,'codigo','ORDEM_DESATUALIZADA','mensagem','A rota mudou. Atualize e organize novamente.');
     END IF;
@@ -59,6 +60,15 @@ BEGIN
           IS DISTINCT FROM (SELECT array_agg(id ORDER BY id) FROM unnest(v_current) id) THEN
         RETURN jsonb_build_object('sucesso',false,'mensagem','Informe todas as paradas pendentes, sem duplicar ou adicionar paradas.');
     END IF;
+    IF EXISTS(SELECT 1 FROM public.entregas e WHERE e.id=ANY(v_current) AND e.chegada_em IS NOT NULL AND e.id IS DISTINCT FROM p_entrega_ids[1]) THEN
+      RETURN jsonb_build_object('sucesso',false,'mensagem','Mantenha o atendimento em andamento na primeira posição.');
+    END IF;
+    IF EXISTS(SELECT 1 FROM public.entregas child JOIN public.entregas parent ON parent.id=child.coleta_origem_id AND parent.empresa_id=child.empresa_id
+      WHERE child.id=ANY(v_current) AND parent.status<>'entregue' AND
+      (array_position(p_entrega_ids,parent.id) IS NULL OR array_position(p_entrega_ids,parent.id)>=array_position(p_entrega_ids,child.id))) THEN
+      RETURN jsonb_build_object('sucesso',false,'mensagem','Conclua a coleta vinculada ou coloque-a antes da entrega.');
+    END IF;
+    PERFORM ec_private.validar_agenda(p_entrega_ids,p_configuracao->'agenda',(p_configuracao->>'planejamento_saida_em')::timestamptz,true);
     UPDATE public.entregas e SET ordem_na_rota=v_slots[requested.pos::integer],updated_at=now()
     FROM unnest(p_entrega_ids) WITH ORDINALITY AS requested(id,pos)
     WHERE e.id=requested.id AND e.rota_id=p_rota_id AND e.empresa_id=v_rota.empresa_id;

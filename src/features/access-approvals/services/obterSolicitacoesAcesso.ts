@@ -1,4 +1,4 @@
-﻿import { requireCompanyId } from '../../../lib/company';
+import { requireCompanyId, hasActiveSupabaseSession } from '../../../lib/company';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import type { SolicitacaoAcessoItem, MotoristaFrotaItem } from '../types/accessApproval';
 import type { VeiculoDeclarado } from '../../vehicles/types/vehicle';
@@ -12,6 +12,10 @@ export interface ResultadoConsultaSolicitacoes {
 export async function obterSolicitacoesAcesso(): Promise<ResultadoConsultaSolicitacoes> {
   if (!isSupabaseConfigured) {
     throw new Error('Supabase não configurado. Verifique as variáveis de ambiente.');
+  }
+
+  if (!(await hasActiveSupabaseSession())) {
+    return { solicitacoes: [], motoristas: [] };
   }
 
   const companyId = await requireCompanyId();
