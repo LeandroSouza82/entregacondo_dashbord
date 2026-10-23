@@ -9,6 +9,13 @@ export type Json =
 export interface Database {
   public: {
     Tables: {
+      entrega_comprovantes: {
+        Row: {entrega_id:string;empresa_id:string;registrado_por:string;recebedor_tipo:string;recebedor_nome:string|null;observacao:string|null;foto_path:string|null;assinatura_path:string|null;chegada_em:string;concluida_em:string;duracao_segundos:number;latitude:number|null;longitude:number|null;created_at:string}
+        Insert: {entrega_id:string;empresa_id:string;registrado_por:string;recebedor_tipo:string;chegada_em:string;concluida_em:string;duracao_segundos:number}
+        Update: never
+        Relationships: [{foreignKeyName:'entrega_comprovantes_entrega_id_fkey';columns:['entrega_id'];isOneToOne:true;referencedRelation:'entregas';referencedColumns:['id']}]
+      }
+
       empresas: {
         Row: {
           id: string
@@ -155,12 +162,14 @@ export interface Database {
           nome: string
           telefone: string
           email: string | null
+          veiculo_tipo?: 'moto' | 'carro' | 'caminhao' | string | null
           veiculo_modelo: string
           veiculo_placa: string
           status: 'disponivel' | 'em_rota' | 'pausado' | 'offline'
           ativo: boolean
           latitude_atual: number | null
           longitude_atual: number | null
+          localizacao_atualizada_em?: string | null
           capacidade_max_pacotes: number
           avaliacao_media: number
           created_at: string
@@ -192,6 +201,7 @@ export interface Database {
           id: string
           empresa_id: string
           nome_identificador: string
+          whatsapp_cliente: string | null
           destinatario_padrao: string | null
           endereco_completo: string
           numero: string
@@ -211,6 +221,7 @@ export interface Database {
           id?: string
           empresa_id: string
           nome_identificador: string
+          whatsapp_cliente?: string | null
           destinatario_padrao?: string | null
           endereco_completo: string
           numero: string
@@ -248,9 +259,15 @@ export interface Database {
           rota_id: string | null
           ordem_na_rota: number | null
           observacoes_gestor: string | null
+          chegada_em: string | null
           data_hora_entrega: string | null
           janela_inicio: string | null
           janela_fim: string | null
+          janela_data: string | null
+          janela_inicio_em: string | null
+          janela_fim_em: string | null
+          coleta_origem_id: string | null
+          tempo_atendimento_previsto_min: number
           created_at: string
           updated_at: string
         }
@@ -275,11 +292,17 @@ export interface Database {
           data_hora_entrega?: string | null
           janela_inicio?: string | null
           janela_fim?: string | null
+          janela_data?: string | null
+          coleta_origem_id?: string | null
+          tempo_atendimento_previsto_min?: number
           created_at?: string
           updated_at?: string
         }
         Update: Partial<Database['public']['Tables']['entregas']['Insert']>
-        Relationships: []
+        Relationships: [
+          { foreignKeyName: 'entregas_cliente_endereco_id_fkey'; columns: ['cliente_endereco_id']; isOneToOne: false; referencedRelation: 'clientes_enderecos'; referencedColumns: ['id'] },
+          { foreignKeyName: 'entregas_coleta_origem_fk'; columns: ['empresa_id','coleta_origem_id']; isOneToOne: false; referencedRelation: 'entregas'; referencedColumns: ['empresa_id','id'] }
+        ]
       }
       veiculos_motoristas: {
         Row: {
@@ -453,6 +476,9 @@ export interface Database {
           tempo_otimizado_minutos: number
           percentual_economia_km: number
           percentual_economia_tempo: number
+          configuracao_navegacao: Json
+          metricas_fonte: string | null
+          metricas_atualizadas_em: string | null
           ordem_paradas_json: Json
           iniciada_em: string | null
           concluida_em: string | null
@@ -471,6 +497,8 @@ export interface Database {
           tempo_otimizado_minutos: number
           percentual_economia_km: number
           percentual_economia_tempo: number
+          metricas_fonte?: string | null
+          metricas_atualizadas_em?: string | null
           ordem_paradas_json: Json
           iniciada_em?: string | null
           concluida_em?: string | null
@@ -484,7 +512,20 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
+      iniciar_teste_empresa: {Args: {p_nome_empresa?: string | null}; Returns: Json}
+      obter_minha_assinatura: {Args: {p_empresa_id: string}; Returns: Json}
+      criar_compartilhamento_comprovante: {Args: {p_entrega_id:string;p_token:string;p_foto_url?:string|null;p_assinatura_url?:string|null}; Returns:Json}
+      obter_comprovante_compartilhado: {Args: {p_token:string}; Returns:Json}
+      revogar_compartilhamento_comprovante: {Args: {p_entrega_id:string}; Returns:Json}
+      obter_capacidades_rotas: {Args: Record<PropertyKey, never>; Returns: Json}
+      configurar_nome_empresa: {Args: {p_empresa_id: string; p_nome: string}; Returns: Json}
+      obter_acompanhamento_cliente: {Args: {p_token: string}; Returns: Json}
+      enviar_servicos_motorista: {Args: {p_dados:Json;p_plano_coletas?:Json};Returns:Json}
+      enviar_pedidos_motorista: {Args: {p_dados:Json};Returns:Json}
+
       salvar_cliente_endereco: { Args: { p_dados: Json }; Returns: Json }
+      excluir_cliente_endereco: { Args: { p_id: string }; Returns: Json }
+      obter_comprovante_publico: { Args: { p_entrega_id: string }; Returns: Json }
 
       obter_meu_status_acesso: {
         Args: Record<PropertyKey, never>

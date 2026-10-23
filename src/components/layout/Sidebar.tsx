@@ -14,7 +14,8 @@ import {
   LogOut
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
-import { BrandLogo } from '../common/BrandLogo';
+import { EntregaCondoLogo } from '../common/EntregaCondoLogo';
+import { useCompanyIdentity } from '../../lib/companyIdentity';
 
 interface UserProfile {
   nome: string;
@@ -55,7 +56,7 @@ function extrairPerfil(user: any): UserProfile {
   };
 }
 
-export type ActiveTab = 'overview' | 'new_route' | 'routing' | 'deliveries' | 'drivers' | 'approvals' | 'condos' | 'history' | 'settings';
+export type ActiveTab = 'overview' | 'new_route' | 'deliveries' | 'drivers' | 'approvals' | 'condos' | 'history' | 'settings' | 'proofs';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -63,6 +64,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
+  const company = useCompanyIdentity();
   const [perfil, setPerfil] = useState<UserProfile>({
     nome: 'Gestor',
     email: '',
@@ -93,9 +95,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
   }, []);
 
   async function handleLogout() {
+    localStorage.removeItem('ec_demo_auth');
     localStorage.removeItem('ec_active_company_id');
     await supabase.auth.signOut();
-    window.location.reload();
+    if (typeof window !== 'undefined' && window.location.search.includes('demo=')) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('demo');
+      window.location.href = url.pathname + url.search;
+    } else {
+      window.location.reload();
+    }
   }
 
   const menuItems = [
@@ -107,17 +116,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
     },
     {
       id: 'new_route' as ActiveTab,
-      label: 'Nova rota de entregas',
+      label: 'Nova Rota',
       icon: Route,
       badge: null,
       highlight: true,
-    },
-    {
-      id: 'routing' as ActiveTab,
-      label: 'Comparador de Rotas',
-      icon: Route,
-      badge: null,
-      highlight: false,
     },
     {
       id: 'deliveries' as ActiveTab,
@@ -144,6 +146,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
       icon: Building2,
       badge: null,
     },
+    {id:'proofs' as ActiveTab, label:'Comprovantes', icon:PackageCheck, badge:null},
     {
       id: 'history' as ActiveTab,
       label: 'Relatórios & Histórico',
@@ -153,15 +156,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
   ];
 
   return (
-    <aside className="w-64 bg-navy-800 text-slate-200 flex flex-col flex-shrink-0 border-r border-navy-700/70 select-none h-screen sticky top-0 z-30 transition-all">
+    <aside className="w-[248px] bg-[#0F1B2D] text-slate-200 flex flex-col flex-shrink-0 border-r border-navy-700/70 select-none h-screen sticky top-0 z-30 transition-all">
       {/* Brand Header */}
-      <div className="h-20 flex items-center px-6 border-b border-navy-700/60 bg-navy-850/60 backdrop-blur">
-        <BrandLogo size="md" theme="dark" subtitle="Gestão Logística Pro" />
+      <div className="min-h-20 flex flex-col justify-center px-6 py-4 border-b border-navy-700/60 bg-navy-850/60 backdrop-blur">
+        <p className="text-xs text-slate-400">Painel da empresa</p>
+        <h1 data-company-identity className="mt-1 break-words text-lg font-bold text-white">{company.name || 'Sua empresa'}</h1>
       </div>
 
       {/* Main Navigation */}
       <div className="flex-1 py-6 px-3 space-y-1.5 overflow-y-auto">
-        <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+        <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
           Navegação Principal
         </div>
 
@@ -175,14 +179,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
               onClick={() => onTabChange(item.id)}
               className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-medium transition-all group duration-150 ${
                 isActive
-                  ? 'bg-gradient-to-r from-terracotta-600 to-terracotta-500 text-white shadow-md shadow-terracotta-600/25 font-semibold'
-                  : 'text-slate-300 hover:text-white hover:bg-navy-700/60'
+                  ? 'bg-slate-800/50 text-white font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
               }`}
             >
               <div className="flex items-center gap-3">
                 <Icon
                   className={`w-5 h-5 transition-colors ${
-                    isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-200'
+                    isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-300'
                   }`}
                 />
                 <span>{item.label}</span>
@@ -209,20 +213,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
           );
         })}
 
-        <div className="pt-6 px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+        <div className="pt-6 px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
           Sistema & Conexões
         </div>
 
         <button
           onClick={() => onTabChange('settings')}
-          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all group ${
             activeTab === 'settings'
-              ? 'bg-navy-700 text-white'
-              : 'text-slate-300 hover:text-white hover:bg-navy-700/50'
+              ? 'bg-slate-800/50 text-white font-semibold'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
           }`}
         >
           <div className="flex items-center gap-3">
-            <Settings className="w-5 h-5 text-slate-400" />
+            <Settings
+              className={`w-5 h-5 transition-colors ${
+                activeTab === 'settings' ? 'text-white' : 'text-slate-500 group-hover:text-slate-300'
+              }`}
+            />
             <span>Configurações</span>
           </div>
         </button>
@@ -255,6 +263,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
         </p>
       </div>
 
+      <div className="px-6 pb-3"><EntregaCondoLogo height={24} subtitle="Tecnologia para sua operação" /></div>
+
       {/* User Footer Dinâmico com Perfil Real e Logout */}
       <div className="p-3.5 border-t border-navy-700/60 bg-navy-850/90 flex items-center justify-between gap-2">
         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -262,7 +272,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
             {perfil.iniciais}
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-xs font-semibold text-white truncate" title={perfil.nome}>
+            <span className="text-xs font-semibold text-slate-200 truncate" title={perfil.nome}>
               {perfil.nome}
             </span>
             <span className="text-[10px] text-slate-400 font-medium">Gestor de Logística</span>

@@ -16,6 +16,7 @@ const FILE_ORDER = [
   path.join(MODULES_DIR, '01b_helpers.sql'),
   path.join(MODULES_DIR, '02_tables_vehicles.sql'),
   path.join(MODULES_DIR, '03_tables_logistics.sql'),
+  path.join(MODULES_DIR, '03b_route_rules.sql'),
 
   path.join(MODULES_DIR, '04_storage.sql'),
   path.join(MODULES_DIR, '04a_storage_constraints.sql'),
@@ -40,9 +41,14 @@ const FILE_ORDER = [
   path.join(FUNCTIONS_DIR, 'analisar_veiculo_motorista.sql'),
   path.join(FUNCTIONS_DIR, 'despachar_rota_transacional.sql'),
   path.join(FUNCTIONS_DIR, 'iniciar_rota.sql'),
+  path.join(MODULES_DIR, '07_driver_order_inbox.sql'),
   path.join(FUNCTIONS_DIR, 'reordenar_paradas_rota.sql'),
   path.join(FUNCTIONS_DIR, 'concluir_rota.sql'),
   path.join(FUNCTIONS_DIR, 'registrar_conclusao_entrega.sql'),
+  path.join(FUNCTIONS_DIR, 'concluir_atendimento_entrega.sql'),
+  path.join(FUNCTIONS_DIR, 'atualizar_localizacao_motorista.sql'),
+  path.join(FUNCTIONS_DIR, 'enviar_servicos_motorista.sql'),
+  path.join(MODULES_DIR, '08_push_notifications.sql'),
   path.join(FUNCTIONS_DIR, 'obter_meu_status_acesso.sql'),
   path.join(FUNCTIONS_DIR, 'sincronizar_meu_perfil.sql'),
   path.join(FUNCTIONS_DIR, 'salvar_cliente_endereco.sql'),
@@ -51,6 +57,11 @@ const FILE_ORDER = [
   // 3. Segurança e Grants
   path.join(MODULES_DIR, '05_rls_policies.sql'),
   path.join(MODULES_DIR, '06_grants.sql'),
+  path.join(MODULES_DIR, '09_customer_tracking.sql'),
+  path.join(FUNCTIONS_DIR, 'obter_comprovante_publico.sql'),
+  path.join(MODULES_DIR, '10_receipt_sharing.sql'),
+  path.join(MODULES_DIR, '11_company_trial.sql'),
+  path.join(MODULES_DIR, '12_subscription_payments.sql'),
 ];
 
 function buildSchema() {

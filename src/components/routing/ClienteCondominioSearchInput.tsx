@@ -1,5 +1,7 @@
+import { coordenadasValidas, erroLocalizacaoEndereco } from '../../features/routes/services/addressCoordinates';
+import { geocodificarEndereco } from '../../features/routes/services/routeOptimization';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Building2, Search, Loader2, Sparkles, Check, MapPin, Clock, Globe } from 'lucide-react';
+import { Building2, Search, Loader2, Sparkles, Check, MapPin, Clock, Globe, Trash2 } from 'lucide-react';
 import type { ClienteEnderecoItem } from '../../features/routes/types/clienteEndereco';
 import type { PontoCoordenada } from '../../types/logistics';
 import { 
@@ -7,8 +9,9 @@ import {
   pertenceAGrandeFlorianopolis,
   buscarSugestoesNominatim
 } from '../../features/routes/services/buscarClientesEnderecos';
+import { excluirClienteEndereco } from '../../features/routes/services/excluirClienteEndereco';
 
-const GOOGLE_PLACES_KEY = import.meta.env.VITE_GOOGLE_PLACES_KEY || '';
+const GOOGLE_PLACES_KEY = '';
 
 interface GooglePlaceItem {
   placeId: string;
@@ -44,16 +47,19 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
   disabled = false,
   inputRef,
 }) => {
+  const selectionRevisionRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<number | null>(null);
   const sessionTokenRef = useRef<string>(crypto.randomUUID());
 
+  const [erroLocalizacao, setErroLocalizacao] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [carregando, setCarregando] = useState<boolean>(false);
   const [sugestoesLocais, setSugestoesLocais] = useState<ClienteEnderecoItem[]>([]);
   const [sugestoesGoogle, setSugestoesGoogle] = useState<GooglePlaceItem[]>([]);
   const [indiceFocado, setIndiceFocado] = useState<number>(-1);
   const [selecionadoManual, setSelecionadoManual] = useState<boolean>(false);
+  const [excluindoId, setExcluindoId] = useState<string | null>(null);
 
   // Fecha o dropdown ao clicar fora
   useEffect(() => {
@@ -196,6 +202,8 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
   }, [empresaId, buscarGooglePlaces]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    selectionRevisionRef.current++;
+    setErroLocalizacao(null);
     const novoValor = e.target.value;
     onChange(novoValor);
     setSelecionadoManual(false);
@@ -218,6 +226,7 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
 
   // Seleção de item da base local (0 custo de API)
   const handleSelectLocal = (item: ClienteEnderecoItem) => {
+    selectionRevisionRef.current++;
     onSelectClienteEndereco(item);
     setSelecionadoManual(true);
     setIsOpen(false);
@@ -225,14 +234,35 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
     setSugestoesGoogle([]);
   };
 
+  // Exclusão permanente de endereço salvo (isolada da seleção)
+  const handleExcluirLocal = async (e: React.MouseEvent, item: ClienteEnderecoItem) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (excluindoId) return;
+    setExcluindoId(item.id);
+    setErroLocalizacao(null);
+    try {
+      await excluirClienteEndereco(item.id);
+      setSugestoesLocais((prev) => prev.filter((s) => s.id !== item.id));
+      setIndiceFocado(-1);
+    } catch (err) {
+      console.warn('Erro ao excluir endereço salvo:', err);
+      setErroLocalizacao(err instanceof Error && err.message ? err.message : 'Não foi possível excluir o endereço. Tente novamente.');
+    } finally {
+      setExcluindoId(null);
+    }
+  };
+
   // Seleção de item de sugestão externa (Google Places ou Nominatim)
   const handleSelectGoogle = async (item: GooglePlaceItem) => {
+    const revision = ++selectionRevisionRef.current;
     setCarregando(true);
+    setErroLocalizacao(null);
     try {
       // Se já temos coordenadas (fallback Nominatim), não consome a API do Google
-      if (item.origem === 'nominatim' && item.coordenadas) {
+      if (coordenadasValidas(item.coordenadas)) {
         const nomeFinal = item.mainText;
-        const enderecoFinal = item.secondaryText ? `${item.mainText}, ${item.secondaryText}` : item.fullText;
+        const enderecoFinal = item.fullText;
 
         onChange(nomeFinal);
         setSelecionadoManual(true);
@@ -250,10 +280,7 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
         return;
       }
 
-      let coordenadas: PontoCoordenada = {
-        lat: -27.5954,
-        lng: -48.5480,
-      };
+      let coordenadas: PontoCoordenada | null = null;
 
       if (GOOGLE_PLACES_KEY && item.placeId) {
         try {
@@ -269,12 +296,21 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
             }
           }
         } catch {
-          // Coordenadas padrão se falhar
+          // Tenta geocodificação pelo endereço completo abaixo.
         }
       }
 
+      if (!coordenadasValidas(coordenadas)) {
+        coordenadas = (await geocodificarEndereco(item.fullText))?.coordenadas ?? null;
+      }
+      if (revision !== selectionRevisionRef.current) return;
+      if (!coordenadasValidas(coordenadas)) {
+        setErroLocalizacao(erroLocalizacaoEndereco);
+        return;
+      }
+
       const nomeFinal = item.mainText;
-      const enderecoFinal = item.secondaryText ? `${item.mainText}, ${item.secondaryText}` : item.fullText;
+      const enderecoFinal = item.fullText;
 
       onChange(nomeFinal);
       setSelecionadoManual(true);
@@ -360,6 +396,7 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
         </div>
       </div>
 
+      {erroLocalizacao && <p role="alert" className="mt-2 text-sm text-red-700">{erroLocalizacao}</p>}
       {/* Dropdown de Resultados Inteligentes */}
       {isOpen && (
         <div className="absolute left-0 top-full mt-2 w-full sm:w-[580px] md:w-[660px] lg:w-[720px] max-w-[94vw] bg-white border border-slate-200/90 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn max-h-[440px] overflow-y-auto ring-1 ring-slate-900/5">
@@ -410,10 +447,31 @@ export const ClienteCondominioSearchInput: React.FC<ClienteCondominioSearchInput
                     </div>
 
                     <div className="flex-shrink-0 flex flex-col items-end gap-1.5 pl-2">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-200/90 whitespace-nowrap shadow-2xs">
-                        <Sparkles className="w-3 h-3 text-emerald-600" />
-                        Salvo no Banco · {item.total_entregas_realizadas} entregas
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-200/90 whitespace-nowrap shadow-2xs">
+                          <Sparkles className="w-3 h-3 text-emerald-600" />
+                          Salvo no Banco · {item.total_entregas_realizadas} entregas
+                        </span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Excluir endereço ${item.nome_identificador}`}
+                          title="Excluir endereço"
+                          aria-disabled={excluindoId === item.id}
+                          onClick={(e) => handleExcluirLocal(e, item)}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') handleExcluirLocal(e as unknown as React.MouseEvent, item);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                        >
+                          {excluindoId === item.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </span>
+                      </div>
                       {item.tempo_medio_minutos && (
                         <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 font-semibold whitespace-nowrap">
                           <Clock className="w-3 h-3 text-slate-400" />

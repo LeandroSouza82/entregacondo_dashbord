@@ -1,12 +1,22 @@
 import { useEffect, useState, type ReactNode, type FormEvent } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
-import { Building2, User as UserIcon, Mail, Lock, LogIn, UserPlus, AlertCircle } from 'lucide-react';
+import { 
+  Building2, 
+  User as UserIcon, 
+  Mail, 
+  Lock, 
+  LogIn, 
+  UserPlus, 
+  AlertCircle,
+  Eye,
+  EyeOff
+} from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { requireCompanyId } from '../lib/company';
 
 type AuthMode = 'login' | 'cadastro';
 
-export function AuthGate({ children }: { children: ReactNode }) {
+export function AuthGate({ children, initialMode = 'login' }: { children: ReactNode; initialMode?: AuthMode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -14,9 +24,26 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [demoAtivo, setDemoAtivo] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || !import.meta.env.DEV) return false;
+    const fromQuery = new URLSearchParams(window.location.search).get('demo') === 'true';
+    const fromStorage = localStorage.getItem('ec_demo_auth') === 'true';
+    if (fromQuery || fromStorage) {
+      localStorage.setItem('ec_demo_auth', 'true');
+      if (!localStorage.getItem('ec_active_company_id')) {
+        localStorage.setItem('ec_active_company_id', '11111111-1111-1111-1111-111111111111');
+      }
+      return true;
+    }
+    return false;
+  });
+
+  // Controle de visibilidade de senha
+  const [showPassword, setShowPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
 
   // Modo da tela: 'login' ou 'cadastro'
-  const [modo, setModo] = useState<AuthMode>('login');
+  const [modo, setModo] = useState<AuthMode>(initialMode);
 
   // Campos do formulário
   const [email, setEmail] = useState('');
@@ -60,6 +87,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     async function validarAcesso() {
       if (!session) return;
       setError('');
+      setAllowed(false);
 
       try {
         await requireCompanyId();
@@ -68,30 +96,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-
-        // Fallback resiliente: caso a RPC não exista no schema cache do Supabase remoto (404/PGRST202)
-        const isRpcCacheError =
-          msg.includes('sincronizar_meu_perfil') ||
-          msg.includes('schema cache') ||
-          msg.includes('404') ||
-          msg.includes('PGRST202') ||
-          msg.includes('obter_meu_status_acesso') ||
-          msg.includes('Could not find the function');
-
-        if (isRpcCacheError) {
-          console.warn('[AuthGate] RPC ausente ou cache desatualizado no Supabase. Acionando fallback direto via getUser():', msg);
-          try {
-            const { data: userData, error: userErr } = await supabase.auth.getUser();
-            if (active && !userErr && userData?.user) {
-              setCurrentUser(userData.user);
-              setAllowed(true);
-              setError('');
-              return;
-            }
-          } catch (fallbackError) {
-            console.error('[AuthGate] Erro ao carregar dados do usuário via fallback:', fallbackError);
-          }
-        }
 
         if (active) {
           setError(msg);
@@ -151,8 +155,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
       if (!nomeCompleto.trim()) {
         throw new Error('Informe seu nome completo.');
       }
-      if (!nomeEmpresa.trim()) {
-        throw new Error('Informe o nome da Administradora ou Empresa.');
+      if (nomeEmpresa.trim().length < 2 || nomeEmpresa.trim().length > 120) {
+        throw new Error('Informe o nome da empresa entre 2 e 120 caracteres.');
       }
       if (!email.trim()) {
         throw new Error('Informe um e-mail válido.');
@@ -166,6 +170,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         email: email.trim(),
         password,
         options: {
+          emailRedirectTo: window.location.origin + '/',
           data: {
             name: nomeCompleto.trim(),
             full_name: nomeCompleto.trim(),
@@ -184,8 +189,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
       let activeUser = signUpData.user;
       let activeSession = signUpData.session;
 
-      // Se a sessão não foi retornada diretamente no signUp (ex: auto-confirm pendente), tenta login imediato
-      if (!activeSession) {
+      // Se a sessão não foi retornada diretamente no signUp, só tenta login imediato se o e-mail já estiver confirmado
+      if (!activeSession && activeUser?.email_confirmed_at) {
         const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email: email.trim(),
           password,
@@ -197,78 +202,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
         }
       }
 
-      // 3. Se autenticado, cria empresa e vínculo inicial
-      if (activeUser) {
-        const codPrefixo = nomeEmpresa.trim().substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, 'ADM') || 'ADM';
-        const codigoConvite = `EC-${codPrefixo}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-        let empresaId: string | null = null;
-
-        // Cria a empresa se possível
-        try {
-          const { data: novaEmpresa, error: empErr } = await supabase
-            .from('empresas')
-            .insert({
-              nome: nomeEmpresa.trim(),
-              codigo_convite: codigoConvite,
-              cidade: 'Florianópolis',
-              uf: 'SC',
-              ativa: true,
-            })
-            .select('id')
-            .maybeSingle();
-
-          if (!empErr && novaEmpresa?.id) {
-            empresaId = novaEmpresa.id;
-          }
-        } catch (e) {
-          console.warn('[AuthGate] Inserção de empresa direta não permitida por RLS ou já criada:', e);
-        }
-
-        // Se a inserção direta não retornou ID, busca a primeira empresa existente
-        if (!empresaId) {
-          const { data: empExistente } = await supabase
-            .from('empresas')
-            .select('id')
-            .limit(1)
-            .maybeSingle();
-
-          if (empExistente?.id) {
-            empresaId = empExistente.id;
-          }
-        }
-
-        // Cria o vínculo de membro gestor aprovado
-        if (empresaId) {
-          try {
-            await supabase.from('empresa_membros').upsert({
-              empresa_id: empresaId,
-              user_id: activeUser.id,
-              papel: 'gestor',
-              status: 'aprovado',
-              aprovado_em: new Date().toISOString(),
-            }, { onConflict: 'empresa_id,user_id' });
-          } catch (membroErr) {
-            console.warn('[AuthGate] Registro em empresa_membros gerou aviso:', membroErr);
-          }
-        }
-
-        // Sincroniza o perfil do usuário
-        try {
-          await supabase.rpc('sincronizar_meu_perfil');
-        } catch {
-          // Ignora se indisponível
-        }
-      }
-
-      // 4. Se a sessão foi ativada com sucesso, libera o acesso direto ao dashboard
+      // Access is verified by the effect through the atomic server-side provisioning RPC.
       if (activeSession) {
         setSession(activeSession);
         setCurrentUser(activeUser);
-        setAllowed(true);
-        setSuccessMessage('Conta de gestor criada com sucesso! Acessando o painel...');
       } else {
-        setSuccessMessage('Conta cadastrada com sucesso! Verifique seu e-mail caso a confirmação seja exigida, ou entre com sua senha.');
+        setSuccessMessage('Cadastro recebido! Confirme seu e-mail e entre para iniciar seus 30 dias grátis.');
         setModo('login');
       }
     } catch (e) {
@@ -278,16 +217,23 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   }
 
-  if (session && allowed) {
-    const userEmail = currentUser?.email || session?.user.email || '';
+  if ((session && allowed) || demoAtivo) {
+    const userEmail = currentUser?.email || session?.user.email || 'gestor.demo@entregacondo.com.br';
     return (
       <>
-        <div className="flex justify-end items-center gap-4 p-2 bg-white text-sm border-b">
+        <div className="flex justify-end items-center gap-4 p-2 bg-[#E4E5E9] text-sm border-b border-gray-300">
           <span className="font-medium text-slate-700">{userEmail}</span>
           <button
-            className="text-slate-500 hover:text-red-700 transition-colors"
+            className="text-slate-500 hover:text-red-700 transition-colors cursor-pointer"
             onClick={() => {
+              localStorage.removeItem('ec_demo_auth');
               localStorage.removeItem('ec_active_company_id');
+              if (typeof window !== 'undefined' && window.location.search.includes('demo=')) {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('demo');
+                window.history.replaceState({}, '', url.pathname + url.search);
+              }
+              setDemoAtivo(false);
               setSession(null);
               setAllowed(false);
               void supabase.auth.signOut();
@@ -303,21 +249,31 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 p-6">
-      <div className="w-full max-w-md bg-white rounded-2xl p-8 border border-slate-200/80 shadow-2xl space-y-6">
+    <main 
+      className="min-h-screen flex items-center justify-center p-4 sm:p-6 bg-cover bg-no-repeat bg-[center_left]"
+      style={{
+        backgroundImage: 'url(/login-bg.jpg)',
+        backgroundColor: '#111E30',
+      }}
+    >
+      <div className="w-full max-w-[420px] bg-white rounded-3xl p-8 sm:p-9 shadow-2xl border border-slate-100/90 space-y-6">
         
         {/* CABEÇALHO */}
-        <div className="text-center space-y-1.5">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-orange-100 text-orange-600 mb-2">
-            <Building2 className="w-6 h-6" />
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#0F1B2D] p-2 shadow-lg mb-1 border border-slate-800">
+            <img 
+              src="/app-logo.png" 
+              alt="EntregaCondo Logo" 
+              className="w-full h-full object-contain"
+            />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">
             EntregaCondo <span className="text-orange-600">·</span> Gestão
           </h1>
-          <p className="text-sm text-slate-500">
+          <p className="text-xs sm:text-sm text-slate-500 font-medium">
             {modo === 'login'
               ? 'Acesse o painel operacional da sua administradora'
-              : 'Cadastre sua administradora e comece a operar'}
+              : 'Cadastre sua empresa e personalize seus atendimentos'}
           </p>
         </div>
 
@@ -335,14 +291,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <div className="flex gap-3">
               <button
                 type="button"
-                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg p-2.5 text-sm font-medium transition-colors"
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg p-2.5 text-sm font-medium transition-colors cursor-pointer"
                 onClick={() => window.location.reload()}
               >
                 Atualizar acesso
               </button>
               <button
                 type="button"
-                className="flex-1 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg p-2.5 text-sm font-medium transition-colors"
+                className="flex-1 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg p-2.5 text-sm font-medium transition-colors cursor-pointer"
                 onClick={() => void supabase.auth.signOut()}
               >
                 Sair
@@ -351,8 +307,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
           </div>
         ) : (
           <>
-            {/* SELETOR DE MODO: JÁ TENHO CONTA | CRIAR NOVA CONTA */}
-            <div className="flex bg-slate-100 p-1 rounded-xl gap-1">
+            {/* SELETOR DE MODO: JÁ TENHO CONTA | CRIAR NOVA CONTA (PILL STYLE) */}
+            <div className="flex items-center justify-center gap-1.5 p-1 bg-slate-100/90 rounded-2xl text-xs font-semibold text-slate-600">
               <button
                 type="button"
                 onClick={() => {
@@ -360,13 +316,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   setError('');
                   setSuccessMessage('');
                 }}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   modo === 'login'
-                    ? 'bg-white text-slate-900 shadow-sm'
+                    ? 'bg-white text-slate-900 border border-orange-500/80 shadow-xs font-bold'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                <LogIn className="w-3.5 h-3.5" />
+                <LogIn className="w-3.5 h-3.5 text-orange-600" />
                 <span>Já tenho conta</span>
               </button>
               <button
@@ -376,14 +332,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   setError('');
                   setSuccessMessage('');
                 }}
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                className={`flex-1 py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   modo === 'cadastro'
-                    ? 'bg-white text-orange-600 shadow-sm'
+                    ? 'bg-white text-orange-600 border border-orange-500/80 shadow-xs font-bold'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                <span>Criar nova conta de gestor</span>
+                <span>Criar empresa · 30 dias grátis</span>
               </button>
             </div>
 
@@ -406,13 +362,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
             {modo === 'login' && (
               <form onSubmit={login} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
                     E-mail do Gestor
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
+                      className="w-full pl-10 pr-3.5 h-11 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 transition-all"
                       type="email"
                       placeholder="gestor@administradora.com"
                       autoComplete="username"
@@ -424,27 +380,36 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
                     Palavra-passe / Senha
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
-                      type="password"
+                      className="w-full pl-10 pr-11 h-11 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 transition-all"
+                      type={showPassword ? 'text' : 'password'}
                       placeholder="••••••••"
                       autoComplete="current-password"
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer rounded-lg hover:bg-slate-100 focus:outline-none"
+                      title={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                      aria-label={showPassword ? 'Ocultar senha' : 'Exibir senha'}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
 
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold rounded-xl py-3 shadow-md shadow-orange-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold rounded-xl py-3 shadow-md shadow-orange-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                 >
                   <LogIn className="w-4 h-4" />
                   <span>{busy ? 'Entrando…' : 'Entrar no Dashboard'}</span>
@@ -453,16 +418,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
             )}
 
             {/* FORMULÁRIO DE CADASTRO DE GESTOR */}
+            {modo === 'cadastro' && <p className="text-xs leading-relaxed text-slate-600">30 dias grátis, sem cartão. Depois, R$ 149,90/mês por empresa, com até 3 motoristas ativos e 1.000 atendimentos por mês. Seus dados ficam preservados se não assinar.</p>}
             {modo === 'cadastro' && (
               <form onSubmit={registrarGestor} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
                     Nome Completo <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                    <UserIcon className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
+                      className="w-full pl-10 pr-3.5 h-11 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 transition-all"
                       type="text"
                       placeholder="Ex: Carlos Oliveira"
                       required
@@ -473,30 +439,36 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Nome da Administradora / Empresa <span className="text-red-500">*</span>
+                  <label htmlFor="company-name" className="block text-xs font-bold text-slate-800 mb-1.5">
+                    Nome da sua empresa <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                    <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
+                      className="w-full pl-10 pr-3.5 h-11 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 transition-all"
                       type="text"
-                      placeholder="Ex: Administradora Habitarte"
+                      id="company-name"
+                      placeholder="Ex: Essenza Condomínios"
+                      autoComplete="organization"
+                      minLength={2}
+                      maxLength={120}
+                      aria-describedby="company-name-help"
                       required
                       value={nomeEmpresa}
                       onChange={(e) => setNomeEmpresa(e.target.value)}
                     />
                   </div>
+                  <p id="company-name-help" className="mt-2 text-xs leading-relaxed text-slate-500">Este nome identifica sua empresa nas mensagens, no acompanhamento e nos comprovantes. Você pode alterá-lo em Configurações.</p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
                     E-mail de Acesso <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
+                      className="w-full pl-10 pr-3.5 h-11 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 transition-all"
                       type="email"
                       placeholder="gestor@suaempresa.com"
                       autoComplete="username"
@@ -508,14 +480,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-800 mb-1.5">
                     Palavra-passe / Senha (mínimo 6 caracteres) <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                      className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
-                      type="password"
+                      className="w-full pl-10 pr-11 h-11 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 transition-all"
+                      type={showRegisterPassword ? 'text' : 'password'}
                       placeholder="••••••••"
                       autoComplete="new-password"
                       required
@@ -523,16 +495,25 @@ export function AuthGate({ children }: { children: ReactNode }) {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer rounded-lg hover:bg-slate-100 focus:outline-none"
+                      title={showRegisterPassword ? 'Ocultar senha' : 'Exibir senha'}
+                      aria-label={showRegisterPassword ? 'Ocultar senha' : 'Exibir senha'}
+                    >
+                      {showRegisterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
                 </div>
 
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold rounded-xl py-3 shadow-md shadow-orange-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold rounded-xl py-3 shadow-md shadow-orange-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>{busy ? 'Criando conta e empresa…' : 'Criar Conta e Acessar'}</span>
+                  <span>{busy ? 'Preparando cadastro…' : 'Criar conta e testar grátis'}</span>
                 </button>
               </form>
             )}

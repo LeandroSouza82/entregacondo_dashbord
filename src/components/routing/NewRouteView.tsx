@@ -1,10 +1,21 @@
-import { requireCompanyId } from '../../lib/company';
+import {RouteRuleFields, RouteRuleEditor} from './RouteRuleFields';
+import {emptyDraftRule, validateDraftRule, hasRouteRules, draftToRule, planningNow, ruleDateTime, type DraftRule} from '../../features/routes/services/routeRules';
+import {optimizeSchedule, evaluateSchedule, type SchedulePlan} from '../../features/routes/services/routeSchedule';
+import {collectionRoadCosts} from '../../features/routes/services/collectionRoadCosts';
+import { coordenadasValidas, erroLocalizacaoEndereco } from '../../features/routes/services/addressCoordinates';
+import { normalizeCustomerWhatsApp, legacyAddressNotes } from '../../features/routes/services/customerContact';
+import { dispatchDriverOrders } from '../../features/routes/services/dispatchDriverServices';
+import { estimateServiceTimes, type ServiceSample } from '../../features/routes/services/serviceTimeEstimates';
+import { fetchRoadPlan, type RoadCoordinate } from '../../features/routes/services/roadGeometry';
+import { requireCompanyId, hasActiveSupabaseSession, isDemoModeActive } from '../../lib/company';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { RouteMap } from './RouteMap';
 import { PlacesAutocompleteInput } from './PlacesAutocompleteInput';
 import { ClienteCondominioSearchInput } from './ClienteCondominioSearchInput';
 import type { ClienteEnderecoItem } from '../../features/routes/types/clienteEndereco';
 import { salvarClienteEndereco } from '../../features/routes/services/salvarClienteEndereco';
+import { ObterIconeVeiculo } from '../../assets/icons/vehicles/VehicleIcons';
+import { normalizarTipoVeiculo } from '../../features/routes/utils/vehicleMovement';
 import { 
   Check, 
   MessageSquare, 
@@ -19,8 +30,18 @@ import {
   MapPin,
   Sparkles,
   BookmarkCheck,
-  Trash2
+  Trash2,
+  Copy
 } from 'lucide-react';
+import { sendRouteToWhatsApp, copyRouteToClipboard } from '../../utils/whatsappRouteFormatter';
+
+function WhatsAppIcon({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.456 5.711 1.457h.004c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+    </svg>
+  );
+}
 import { BalanceteSelectorPopover } from './BalanceteSelectorPopover';
 import { DocumentosSelectorPopover } from './DocumentosSelectorPopover';
 import { 
@@ -45,6 +66,9 @@ interface MotoristaItem {
   nome: string;
   iniciais: string;
   veiculo: string;
+  veiculoTipo?: string | null;
+  latitude_atual?: number | null;
+  longitude_atual?: number | null;
   status: string;
   corAvatar: string;
   empresa_id?: string;
@@ -67,6 +91,8 @@ export interface RotaRascunho {
   pontoPartida?: PontoPartidaItem;
   pontoPartidaTexto?: string;
   timestamp: number;
+  condicoesNovoPedido?: DraftRule;
+  saidaPrevista?: string;
 }
 
 export function obterRascunhoRota(): RotaRascunho | null {
@@ -149,11 +175,15 @@ export const NewRouteView: React.FC = () => {
   const [especificacaoOutro, setEspecificacaoOutro] = useState<string>('');
   const [erroValidacao, setErroValidacao] = useState<string | null>(null);
   const [nomeCliente, setNomeCliente] = useState<string>('');
-  const [blocoApto, setBlocoApto] = useState<string>('');
+  const [whatsappCliente, setWhatsappCliente] = useState<string>('');
   const [enderecoTexto, setEnderecoTexto] = useState<string>('');
   const [coordenadasSelecionadas, setCoordenadasSelecionadas] = useState<PontoCoordenada | null>(null);
   const [pontoPreview, setPontoPreview] = useState<{ nome: string; coordenadas: PontoCoordenada } | null>(null);
   const [observacaoTexto, setObservacaoTexto] = useState<string>(() => rascunhoInicial?.observacaoTexto || '');
+  const [draftRule,setDraftRule]=useState<DraftRule>(()=>rascunhoInicial?.condicoesNovoPedido ?? emptyDraftRule());
+  const [saidaPrevista,setSaidaPrevista]=useState(()=>rascunhoInicial?.saidaPrevista ?? planningNow());
+  const [editingRule,setEditingRule]=useState<string|null>(null);
+  const [scheduleRevision,setScheduleRevision]=useState(0);
   const [salvarParaProximas, setSalvarParaProximas] = useState<boolean>(true);
   const [isBalanceteOpen, setIsBalanceteOpen] = useState<boolean>(false);
   const [isDocumentosOpen, setIsDocumentosOpen] = useState<boolean>(false);
@@ -161,10 +191,53 @@ export const NewRouteView: React.FC = () => {
 
   // Alertas de feedback
   const [mensagemSucesso, setMensagemSucesso] = useState<string | null>(null);
+  const [despachoEnviado, setDespachoEnviado] = useState<string | null>(null);
   const [mensagemErro, setMensagemErro] = useState<string | null>(null);
 
   // Lista de Entregas da Rota com restauração instantânea do rascunho
   const [entregasDaRota, setEntregasDaRota] = useState<PontoParada[]>(() => rascunhoInicial?.entregasDaRota || []);
+
+  const [ultimaRotaDespachada, setUltimaRotaDespachada] = useState<{
+    paradas: PontoParada[];
+    motoristaNome?: string;
+    timestamp?: number;
+  } | null>(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    try {
+      const salvo = window.localStorage.getItem('ec_last_dispatched_route');
+      if (!salvo) return null;
+      const parsed = JSON.parse(salvo);
+      if (Array.isArray(parsed?.paradas) && parsed.paradas.length > 0) {
+        return {
+          paradas: parsed.paradas,
+          motoristaNome: parsed.motoristaNome,
+          timestamp: parsed.timestamp,
+        };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  });
+
+  const handleCopiarRota = useCallback(async (paradas: PontoParada[]) => {
+    const copiado = await copyRouteToClipboard(paradas, (msg) => {
+      setMensagemSucesso(msg);
+      setTimeout(() => setMensagemSucesso(null), 3500);
+    });
+    if (!copiado) {
+      setMensagemErro('Não foi possível copiar o texto automaticamente.');
+      setTimeout(() => setMensagemErro(null), 3500);
+    }
+  }, []);
+
+  const handleEnviarWhatsApp = useCallback((paradas: PontoParada[]) => {
+    const enviado = sendRouteToWhatsApp(paradas);
+    if (!enviado) {
+      setMensagemErro('Nenhuma parada para enviar ao WhatsApp.');
+      setTimeout(() => setMensagemErro(null), 3500);
+    }
+  }, []);
 
   // Auto-Save do Rascunho da Rota em localStorage a cada alteração
   useEffect(() => {
@@ -174,22 +247,29 @@ export const NewRouteView: React.FC = () => {
         entregasDaRota,
         observacaoTexto,
         otimizarAutomatico,
+        condicoesNovoPedido:draftRule, saidaPrevista,
         pontoPartida,
         pontoPartidaTexto,
         timestamp: Date.now(),
       });
     }
-  }, [entregasDaRota, motoristaAtivo, observacaoTexto, otimizarAutomatico, pontoPartida, pontoPartidaTexto]);
+  }, [entregasDaRota, motoristaAtivo, observacaoTexto, otimizarAutomatico, pontoPartida, pontoPartidaTexto, draftRule, saidaPrevista]);
 
   const handleLimparRascunho = useCallback(() => {
     limparRascunhoRota();
     setEntregasDaRota([]);
     setObservacaoTexto('');
+    setDraftRule(emptyDraftRule());
+    setSaidaPrevista(planningNow());
     setMensagemSucesso('Rascunho da rota limpo com sucesso.');
     setTimeout(() => setMensagemSucesso(null), 3000);
   }, []);
 
   const handleRemoverParada = useCallback((id: string) => {
+    if (entregasDaRota.some(p=>p.coletaOrigemId===id)) {
+      setMensagemErro('Remova o vínculo das entregas em Editar condições antes de excluir esta coleta.');
+      return;
+    }
     setEntregasDaRota(prev => {
       const novaLista = prev.filter(p => p.id !== id);
       if (novaLista.length === 0) {
@@ -197,20 +277,79 @@ export const NewRouteView: React.FC = () => {
       }
       return novaLista;
     });
-  }, []);
+  }, [entregasDaRota]);
 
   // Cálculo inteligente de trajeto e métricas (Ordem de cadastro vs Rota Otimizada)
-  const metricasRota = useMemo<MetricasRota>(() => {
+  const heuristicMetrics = useMemo<MetricasRota>(() => {
     return otimizarSequenciaERota(pontoPartida, entregasDaRota);
   }, [pontoPartida, entregasDaRota]);
 
+  const constrained=hasRouteRules(entregasDaRota);
+  const scheduleKey=JSON.stringify({stops:entregasDaRota,departure:saidaPrevista,optimize:otimizarAutomatico,point:pontoPartida.coordenadas,revision:scheduleRevision});
+  const [scheduled,setScheduled]=useState<{key:string;plan?:SchedulePlan;error?:string}|null>(null);
+  useEffect(()=>{
+    const request=JSON.parse(scheduleKey) as {stops:PontoParada[];departure:string;optimize:boolean;point:PontoCoordenada};
+    if (!hasRouteRules(request.stops)) return;
+    const controller=new AbortController();
+    let active=true;
+    const timeout=setTimeout(()=>{
+      if (active) setScheduled({key:scheduleKey,error:'O cálculo de horários demorou demais. Recalcule antes de enviar.'});
+      controller.abort();
+    },45000);
+    const points:RoadCoordinate[]=[[request.point.lng,request.point.lat],...request.stops.map(p=>[p.coordenadas.lng,p.coordenadas.lat] as RoadCoordinate)];
+    Promise.resolve().then(()=>{
+      if (request.stops.length>100) throw new Error('Organize grupos de até 100 paradas com condições.');
+      return collectionRoadCosts(points,[],request.stops.map((_,i)=>i+1),undefined,import.meta.env.VITE_MAPBOX_TOKEN || '',controller.signal);
+    })
+      .then(costs=>{
+        const [date,time]=request.departure.split('T'); const departure=ruleDateTime(date,time);
+        const rules=request.stops.map(draftToRule);
+        const plan=request.optimize ? optimizeSchedule(rules,costs,departure) : evaluateSchedule(rules,costs,departure,request.stops.map((_,i)=>i+1));
+        if (!controller.signal.aborted) setScheduled({key:scheduleKey,plan});
+      }).catch(error=>{if (!controller.signal.aborted) setScheduled({key:scheduleKey,error:(error as Error).message});})
+      .finally(()=>clearTimeout(timeout));
+    return ()=>{active=false;clearTimeout(timeout);controller.abort();};
+  },[scheduleKey]);
+  const verifiedSchedule=scheduled?.key===scheduleKey ? scheduled : null;
+  const schedulePlan=verifiedSchedule?.plan;
+
   // Lista de paradas a renderizar no mapa: ordenada pela melhor sequência se otimização estiver ativa
   const paradasParaOMapa = useMemo(() => {
-    if (otimizarAutomatico && metricasRota.paradasOtimizadas.length > 0) {
-      return metricasRota.paradasOtimizadas;
+    if (constrained) return schedulePlan ? schedulePlan.order.map(i=>({...entregasDaRota[i-1],sequencia:0})).map((p,i)=>({...p,sequencia:i+1})) : entregasDaRota;
+    if (otimizarAutomatico && heuristicMetrics.paradasOtimizadas.length > 0) {
+      return heuristicMetrics.paradasOtimizadas;
     }
     return entregasDaRota;
-  }, [otimizarAutomatico, metricasRota.paradasOtimizadas, entregasDaRota]);
+  }, [otimizarAutomatico, heuristicMetrics.paradasOtimizadas, entregasDaRota, constrained, schedulePlan]);
+
+  const roadKey = JSON.stringify([
+    [[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat], ...entregasDaRota.map(p => [p.coordenadas.lng, p.coordenadas.lat])],
+    [[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat], ...paradasParaOMapa.map(p => [p.coordenadas.lng, p.coordenadas.lat])],
+  ]);
+  const [roadTotals, setRoadTotals] = useState<{key: string; original: {kilometers: number; minutes: number}; selected: {kilometers: number; minutes: number}} | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const [original, selected] = JSON.parse(roadKey) as RoadCoordinate[][];
+    if (original.length < 2) return () => controller.abort();
+    const token = import.meta.env.VITE_MAPBOX_TOKEN || '';
+    Promise.all([fetchRoadPlan(original, token, controller.signal), fetchRoadPlan(selected, token, controller.signal)])
+      .then(([a,b]) => { if (!controller.signal.aborted) setRoadTotals({key: roadKey, original:a, selected:b}); })
+      .catch(() => { if (!controller.signal.aborted) setRoadTotals(null); });
+    return () => controller.abort();
+  }, [roadKey]);
+  const verifiedTotals = roadTotals?.key === roadKey ? roadTotals : null;
+  const originalKm = verifiedTotals?.original.kilometers || 0;
+  const selectedKm = verifiedTotals?.selected.kilometers || 0;
+  const originalMin = verifiedTotals?.original.minutes || 0;
+  const selectedMin = verifiedTotals?.selected.minutes || 0;
+  const metricasRota: MetricasRota = {...heuristicMetrics, paradasOtimizadas:paradasParaOMapa,
+    distanciaOriginalKm:Number(originalKm.toFixed(2)), tempoOriginalMinutos:Math.ceil(originalMin),
+    distanciaOtimizadaKm:Number(selectedKm.toFixed(2)), tempoOtimizadoMinutos:Math.ceil(selectedMin),
+    economiaKm:Number(Math.max(0,originalKm-selectedKm).toFixed(2)),
+    percentualEconomiaKm:originalKm>0 ? Math.round(Math.max(0,originalKm-selectedKm)/originalKm*100):0,
+    economiaTempoMinutos:Math.max(0,Math.ceil(originalMin-selectedMin)),
+    percentualEconomiaTempo:originalMin>0 ? Math.round(Math.max(0,originalMin-selectedMin)/originalMin*100):0,
+  };
 
   const handleFixarPontoPartidaPadrao = useCallback(async () => {
     const textoDigitado = pontoPartidaTexto.trim();
@@ -264,7 +403,8 @@ export const NewRouteView: React.FC = () => {
 
     // 3. Atualização em segundo plano na empresa se aplicável
     if (empresaId) {
-      void supabase
+      void hasActiveSupabaseSession().then(has => { if (has) void supabase.from('empresas').update({ cidade: enderecoFinal.split(',').pop()?.trim() || 'Palhoça' }).eq('id', empresaId); });
+      if (false) void supabase
         .from('empresas')
         .update({
           cidade: enderecoFinal.split(',').pop()?.trim() || 'Palhoça',
@@ -279,7 +419,18 @@ export const NewRouteView: React.FC = () => {
   useEffect(() => {
     let active = true;
     void requireCompanyId().then(async id => {
-      const { data } = await supabase.from('motoristas').select('*').eq('empresa_id', id).eq('ativo', true);
+      const hasSession = await hasActiveSupabaseSession();
+      const { data } = hasSession
+        ? await supabase.from('motoristas').select('*').eq('empresa_id', id).eq('ativo', true)
+        : {
+            data: isDemoModeActive()
+              ? [
+                  { id: '00000000-0000-4000-8000-000000000101', nome: 'Carlos Silva', veiculo_modelo: 'Honda CG 160 Cargo', veiculo_tipo: 'moto', latitude_atual: -27.5954, longitude_atual: -48.548, status: 'Disponível', empresa_id: id },
+                  { id: '00000000-0000-4000-8000-000000000102', nome: 'Rodrigo Costa', veiculo_modelo: 'Fiorino Furgão', veiculo_tipo: 'utilitario', latitude_atual: -27.5969, longitude_atual: -48.5495, status: 'Disponível', empresa_id: id },
+                  { id: '00000000-0000-4000-8000-000000000103', nome: 'Mariana Souza', veiculo_modelo: 'Yamaha Factor 150', veiculo_tipo: 'moto', latitude_atual: -27.5935, longitude_atual: -48.5512, status: 'Em Rota', empresa_id: id },
+                ]
+              : [],
+          };
       if (active) {
         setEmpresaId(id);
         const mapped = (data || []).map(m => ({
@@ -287,6 +438,9 @@ export const NewRouteView: React.FC = () => {
           nome: m.nome,
           iniciais: m.nome.split(' ').map((n: string) => n[0]).slice(0, 2).join(''),
           veiculo: m.veiculo_modelo || 'Moto Padrão',
+          veiculoTipo: m.veiculo_tipo,
+          latitude_atual: m.latitude_atual,
+          longitude_atual: m.longitude_atual,
           status: m.status || 'Disponível',
           corAvatar: '#0F1B2D',
           empresa_id: m.empresa_id
@@ -305,17 +459,26 @@ export const NewRouteView: React.FC = () => {
     return () => { active = false; };
   }, []);
   const motoristaSelecionado = MOTORISTAS.find(m => m.id === motoristaAtivo);
+  const serviceKey = JSON.stringify([empresaId,motoristaAtivo,paradasParaOMapa.map(p=>p.clienteEnderecoId)]);
+  const [serviceHistory,setServiceHistory]=useState<{key:string;samples:ServiceSample[]}|null>(null);
+  useEffect(()=>{
+    let active=true;
+    const [company,driver,addresses]=JSON.parse(serviceKey) as [string,string,string[]];
+    if(!company||!driver||!addresses.length)return ()=>{active=false;};
+    // Receipt timestamps identify explicit arrival/finish records; legacy guessed times are excluded.
+    void hasActiveSupabaseSession().then(has => { if (!has) return; return supabase.from('entrega_comprovantes').select('duracao_segundos, entregas!inner(cliente_endereco_id,motorista_id)').eq('empresa_id',company).neq('recebedor_tipo','tentativa_falha').in('entregas.cliente_endereco_id',addresses).order('concluida_em',{ascending:false}).limit(1000)
+      .then(({data,error})=>{if(!active)return;setServiceHistory(error?null:{key:serviceKey,samples:(data||[]).map(r=>({addressId:r.entregas.cliente_endereco_id,driverId:r.entregas.motorista_id||'',minutes:r.duracao_segundos/60}))});}); });
+    return ()=>{active=false;};
+  },[serviceKey]);
+  const serviceEstimate=estimateServiceTimes(paradasParaOMapa.map(p=>p.clienteEnderecoId),motoristaAtivo,serviceHistory?.key===serviceKey?serviceHistory.samples:[]);
+
 
   // Callback inteligente: ao selecionar um cliente/condomínio da base salva (0 chamadas de API)
   const handleSelectClienteCondominio = useCallback((item: ClienteEnderecoItem) => {
     setNomeCliente(item.nome_identificador);
-    if (item.destinatario_padrao) {
-      setBlocoApto(item.destinatario_padrao);
-    }
+    setWhatsappCliente(item.whatsapp_cliente || '');
     setEnderecoTexto(item.endereco_completo);
-    if (item.observacoes_acesso) {
-      setObservacaoTexto(item.observacoes_acesso);
-    }
+    setObservacaoTexto(legacyAddressNotes(item.observacoes_acesso, item.destinatario_padrao));
     const coords: PontoCoordenada = {
       lat: Number(item.latitude),
       lng: Number(item.longitude),
@@ -337,6 +500,7 @@ export const NewRouteView: React.FC = () => {
     coordenadas: PontoCoordenada;
   }) => {
     setNomeCliente(dados.nome);
+    setWhatsappCliente('');
     setEnderecoTexto(dados.endereco);
     setCoordenadasSelecionadas(dados.coordenadas);
     setPontoPreview({
@@ -350,7 +514,6 @@ export const NewRouteView: React.FC = () => {
       void salvarClienteEndereco({
         empresa_id: empresaId,
         nome_identificador: dados.nome,
-        destinatario_padrao: blocoApto.trim() || undefined,
         endereco_completo: dados.endereco,
         coordenadas: dados.coordenadas,
       }).then(() => {
@@ -360,9 +523,9 @@ export const NewRouteView: React.FC = () => {
         console.warn('Persistência automática em background:', e);
       });
     }
-  }, [blocoApto, empresaId]);
+  }, [empresaId]);
 
-  // Callback memoizado para seleção de endereço via Google Places ou base salva -> Auto-persiste no banco
+  // Callback memoizado para seleção de endereço via Google Places ou base salva
   const handleAddressSelect = useCallback((dados: {
     enderecoCompleto: string;
     nomeLocal?: string;
@@ -373,36 +536,16 @@ export const NewRouteView: React.FC = () => {
     if (!nomeCliente.trim() && dados.nomeLocal) {
       setNomeCliente(dados.nomeLocal);
     }
-    if (dados.nomeLocal && (!blocoApto || blocoApto.includes('Bloco B'))) {
-      setBlocoApto(dados.nomeLocal);
-    }
     setCoordenadasSelecionadas(dados.coordenadas);
     setPontoPreview({
       nome: nomeFinal,
       coordenadas: dados.coordenadas,
     });
     setErroValidacao(null);
-
-    // GRAVAÇÃO IMEDIATA NO SUPABASE (Garante que todo endereço buscado fique na base própria)
-    if (empresaId && dados.coordenadas && dados.enderecoCompleto) {
-      void salvarClienteEndereco({
-        empresa_id: empresaId,
-        nome_identificador: nomeFinal,
-        destinatario_padrao: blocoApto.trim() || undefined,
-        endereco_completo: dados.enderecoCompleto,
-        coordenadas: dados.coordenadas,
-        observacoes_acesso: observacaoTexto.trim() || undefined,
-      }).then(() => {
-        setMensagemSucesso(`Local "${nomeFinal}" gravado na base da empresa para futuras entregas.`);
-        setTimeout(() => setMensagemSucesso(null), 4000);
-      }).catch((e) => {
-        console.warn('Persistência automática de endereço em background:', e);
-      });
-    }
-  }, [blocoApto, empresaId, nomeCliente, observacaoTexto]);
+  }, [nomeCliente]);
 
   const handleAdicionarEntrega = async () => {
-    const nomeFinal = nomeCliente.trim() || blocoApto.trim() || enderecoTexto.trim().split(',')[0].trim();
+    const nomeFinal = nomeCliente.trim() || enderecoTexto.trim().split(',')[0].trim();
     if (!nomeFinal) {
       setErroValidacao('Nome do cliente ou condomínio é obrigatório.');
       return;
@@ -419,24 +562,35 @@ export const NewRouteView: React.FC = () => {
       return;
     }
 
-    // Validação de coordenadas com fallback suave para Florianópolis se necessário
+    const rule={...draftRule,collection:tipoTarefa==='entrega'?draftRule.collection:''};
+    try { validateDraftRule(rule,tipoTarefa,entregasDaRota); }
+    catch(error) { setErroValidacao((error as Error).message); return; }
+    let normalizedPhone: string;
+    try { normalizedPhone = normalizeCustomerWhatsApp(whatsappCliente); }
+    catch (error) { setErroValidacao((error as Error).message); return; }
+
+    // A typed address is usable only after a successful geocoding response.
     let coords = coordenadasSelecionadas;
-    if (!coords || (coords.lat === 0 && coords.lng === 0)) {
-      coords = {
-        lat: -27.5954 + (Math.random() - 0.5) * 0.03,
-        lng: -48.5480 + (Math.random() - 0.5) * 0.03,
-      };
+    if (!coordenadasValidas(coords)) {
+      const geo = await geocodificarEndereco(enderecoTexto.trim());
+      coords = geo?.coordenadas ?? null;
+      if (!coordenadasValidas(coords)) {
+        setErroValidacao(erroLocalizacaoEndereco);
+        return;
+      }
       setCoordenadasSelecionadas(coords);
     }
 
     const novoIdEntrega = crypto.randomUUID();
-    const novoIdClienteEndereco = crypto.randomUUID();
+    const novoIdClienteEndereco = `cli-${crypto.randomUUID()}`;
 
     const nova: PontoParada = {
       id: novoIdEntrega,
       sequencia: entregasDaRota.length + 1,
       clienteEnderecoId: novoIdClienteEndereco,
-      nomeLocal: blocoApto || 'Edifício',
+      nomeLocal: nomeFinal,
+      unidade: '',
+      whatsappCliente: normalizedPhone,
       destinatario: nomeFinal,
       enderecoFormatado: enderecoTexto.trim(),
       coordenadas: coords,
@@ -444,21 +598,26 @@ export const NewRouteView: React.FC = () => {
       prioridade: 'normal',
       tipoTarefa,
       descricaoOutro: tipoTarefa === 'outros' ? especificacaoOutro.trim() : undefined,
+      observacoesGestor: observacaoTexto.trim() || undefined,
+      janelaData:rule.date || undefined, janelaInicio:rule.start || undefined, janelaFim:rule.end || undefined,
+      coletaOrigemId:rule.collection || undefined,
       codigoRastreio: `EC-${Math.floor(100000 + Math.random() * 900000)}`,
     };
+
+    if (rule.date) nova.tempoMedioAtendimentoMinutos=rule.minutes;
 
     // Memória inteligente: se "outros" foi especificado, salva o termo como chip permanente
     if (tipoTarefa === 'outros' && especificacaoOutro.trim()) {
       setChipsCustomizados(salvarChipCustomizado(especificacaoOutro.trim()));
     }
 
-    // Persistência inteligente: salva para as próximas entregas se selecionado
-    if (salvarParaProximas && coords) {
+    // O despacho exige endereço gravado no banco: a parada é sempre persistida
+    if (coords) {
       try {
         const saved = await salvarClienteEndereco({
           empresa_id: empresaId,
           nome_identificador: nomeFinal,
-          destinatario_padrao: blocoApto.trim() || undefined,
+          whatsapp_cliente: normalizedPhone,
           endereco_completo: enderecoTexto.trim(),
           coordenadas: coords,
           observacoes_acesso: observacaoTexto.trim() || undefined,
@@ -474,10 +633,11 @@ export const NewRouteView: React.FC = () => {
     setEntregasDaRota(prev => [...prev, nova]);
     despachoKey.current = crypto.randomUUID();
     setNomeCliente('');
-    setBlocoApto('');
+    setWhatsappCliente('');
     setEnderecoTexto('');
     setObservacaoTexto('');
     setTipoTarefa('entrega');
+    setDraftRule(emptyDraftRule());
     setEspecificacaoOutro('');
     setErroValidacao(null);
     setCoordenadasSelecionadas(null);
@@ -554,10 +714,17 @@ export const NewRouteView: React.FC = () => {
     if (entregasDaRota.some(p => !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(p.clienteEnderecoId))) {
       setMensagemErro('Salve os endereços no banco antes de despachar. Ative a opção de salvar para próximas entregas.'); return;
     }
+    try {
+      for (const p of entregasDaRota) validateDraftRule({date:p.janelaData ?? '',start:p.janelaInicio ?? '',end:p.janelaFim ?? '',collection:p.coletaOrigemId ?? '',minutes:Math.round(p.tempoMedioAtendimentoMinutos || 0)},p.tipoTarefa ?? 'entrega',entregasDaRota);
+      if (constrained && !schedulePlan) throw new Error(verifiedSchedule?.error || 'Aguarde o cálculo dos horários ou toque em Recalcular.');
+      if (constrained && ruleDateTime(...saidaPrevista.split('T') as [string,string])<Date.now()-300000) throw new Error('Atualize a saída prevista para um horário atual ou futuro e recalcule.');
+    } catch(error) {setMensagemErro((error as Error).message);return;}
     if (isSupabaseConfigured) {
       setDespachando(true);
       try {
         const payloadDespacho = {
+          ...(schedulePlan ? {planejamento_saida_em:new Date(ruleDateTime(...saidaPrevista.split('T') as [string,string])).toISOString(),agenda:schedulePlan.visits.map(v=>({entrega_id:v.id,inicio_em:new Date(v.start).toISOString(),fim_em:new Date(v.finish).toISOString()}))} : {}),
+          metricas_fonte: verifiedTotals && selectedKm>0 && selectedMin>0 ? 'mapbox_directions_planejamento' : null,
           idempotency_key: despachoKey.current,
           empresa_id: empresaId,
           motorista_id: motoristaSelecionado.id,
@@ -576,18 +743,22 @@ export const NewRouteView: React.FC = () => {
             endereco_formatado: p.enderecoFormatado,
             coordenadas: p.coordenadas,
             tipo_tarefa: p.tipoTarefa,
+            janela_data:p.janelaData,janela_inicio:p.janelaInicio,janela_fim:p.janelaFim,coleta_origem_id:p.coletaOrigemId,
           })),
           paradas: paradasParaOMapa.map((parada, idx) => ({
+            id:parada.id,janela_data:parada.janelaData || null,janela_inicio:parada.janelaInicio || null,janela_fim:parada.janelaFim || null,
+            coleta_origem_id:parada.coletaOrigemId || null,tempo_atendimento_previsto_min:Math.round(parada.tempoMedioAtendimentoMinutos || 0),
             cliente_endereco_id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(parada.clienteEnderecoId) ? parada.clienteEnderecoId : null,
             ordem_na_rota: idx + 1,
             codigo_rastreio: parada.codigoRastreio,
             destinatario_nome: parada.destinatario,
-            unidade_apartamento: parada.nomeLocal,
+            unidade_apartamento: (parada.unidade ?? parada.nomeLocal) || null,
+            destinatario_telefone: parada.whatsappCliente || null,
             tipo_tarefa: parada.tipoTarefa || 'entrega',
             descricao_outro: parada.descricaoOutro || null,
             prioridade: parada.prioridade || 'normal',
             volumes_qtd: 1,
-            observacoes_gestor: observacaoTexto || null,
+            observacoes_gestor: parada.observacoesGestor?.trim() || null,
             endereco: {
               id: parada.clienteEnderecoId.startsWith('cli-') ? null : parada.clienteEnderecoId,
               nome_identificador: parada.nomeLocal,
@@ -604,44 +775,41 @@ export const NewRouteView: React.FC = () => {
           }))
         };
 
-        const { data, error } = await supabase.rpc('despachar_rota_transacional', {
-          p_dados: payloadDespacho as any,
-        });
-
-        if (error) {
-          console.warn('Erro ao executar RPC despachar_rota_transacional:', error);
-          setMensagemErro(`Falha transacional ao despachar rota: ${error.message}. As paradas foram mantidas no painel.`);
-          setTimeout(() => setMensagemErro(null), 8000);
-          return;
-        }
-
-        const resp = data as any;
+        const resp = await dispatchDriverOrders(supabase, payloadDespacho);
         if (!resp || resp.sucesso !== true) {
           setMensagemErro(`Erro no despacho da rota: ${resp?.mensagem || 'Falha no banco de dados'}.`);
           setTimeout(() => setMensagemErro(null), 8000);
           return;
         }
 
-        setMensagemSucesso(`Rota inteligente com ${entregasDaRota.length} paradas gravada com sucesso no Supabase e despachada para ${motoristaSelecionado.nome}!`);
+        setMensagemSucesso(resp.mensagem);
+        setDespachoEnviado(resp.mensagem);
+        setTimeout(() => setDespachoEnviado(null), 6000);
         limparRascunhoRota();
         setEntregasDaRota([]);
         despachoKey.current = crypto.randomUUID();
 
-        // Salva cache de última rota despachada para sincronizar instantaneamente com a Visão Geral
+        // Salva cache de última rota despachada para sincronizar instantaneamente com a Visão Geral e reenvio WhatsApp
+        const dadosRotaDespachada = {
+          pontoPartida,
+          paradas: paradasParaOMapa,
+          distanciaOtimizadaKm: metricasRota.distanciaOtimizadaKm,
+          tempoOtimizadoMinutos: metricasRota.tempoOtimizadoMinutos,
+          motoristaNome: motoristaSelecionado.nome,
+          timestamp: Date.now(),
+        };
+        setUltimaRotaDespachada({
+          paradas: paradasParaOMapa,
+          motoristaNome: motoristaSelecionado.nome,
+          timestamp: dadosRotaDespachada.timestamp,
+        });
         if (typeof window !== 'undefined' && window.localStorage) {
-          window.localStorage.setItem('ec_last_dispatched_route', JSON.stringify({
-            pontoPartida,
-            paradas: paradasParaOMapa,
-            distanciaOtimizadaKm: metricasRota.distanciaOtimizadaKm,
-            tempoOtimizadoMinutos: metricasRota.tempoOtimizadoMinutos,
-            motoristaNome: motoristaSelecionado.nome,
-            timestamp: Date.now(),
-          }));
+          window.localStorage.setItem('ec_last_dispatched_route', JSON.stringify(dadosRotaDespachada));
         }
         setTimeout(() => setMensagemSucesso(null), 6000);
       } catch (err: unknown) {
         console.error('Erro de conexão ao despachar rota:', err);
-        setMensagemErro('Erro de conexão ao despachar rota para o servidor. O rascunho foi mantido intacto.');
+        setMensagemErro(err instanceof Error ? err.message : 'Não foi possível confirmar o envio. O rascunho foi mantido intacto.');
         setTimeout(() => setMensagemErro(null), 8000);
         return;
       } finally { setDespachando(false); }
@@ -653,6 +821,10 @@ export const NewRouteView: React.FC = () => {
 
   return (
     <div className="space-y-6 text-[#0F1B2D] animate-fadeIn">
+      {editingRule && entregasDaRota.find(p=>p.id===editingRule) && <RouteRuleEditor key={editingRule}
+        stop={entregasDaRota.find(p=>p.id===editingRule)!} stops={entregasDaRota} onClose={()=>setEditingRule(null)}
+        onSave={value=>{setEntregasDaRota(prev=>prev.map(p=>p.id===editingRule?{...p,janelaData:value.date || undefined,janelaInicio:value.start || undefined,janelaFim:value.end || undefined,coletaOrigemId:value.collection || undefined,tempoMedioAtendimentoMinutos:value.minutes}:p));despachoKey.current=crypto.randomUUID();setEditingRule(null);}}/>}
+
       {/* Header Principal */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -660,7 +832,7 @@ export const NewRouteView: React.FC = () => {
             Nova rota de entregas
           </h1>
           <p className="text-[#516074] text-sm mt-1">
-            Cadastre as entregas, escolha o motorista e deixe o sistema montar a melhor rota.
+            Envie os pedidos para o motorista conferir e aceitar no aplicativo.
           </p>
         </div>
 
@@ -679,6 +851,16 @@ export const NewRouteView: React.FC = () => {
           </label>
         </div>
       </header>
+
+      {despachoEnviado && (
+        <div role="status" className="fixed top-6 right-6 z-[100] max-w-sm p-4 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center gap-3 shadow-2xl animate-fadeIn">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+          <span>{despachoEnviado}</span>
+          <button type="button" onClick={() => setDespachoEnviado(null)} aria-label="Fechar aviso" className="ml-1 opacity-80 hover:opacity-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Alertas de Feedback */}
       {mensagemSucesso && (
@@ -701,7 +883,7 @@ export const NewRouteView: React.FC = () => {
         <div className="flex-1 w-full lg:max-w-[62%] space-y-6">
           
           {/* SEÇÃO 1: MOTORISTA */}
-          <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex flex-col gap-4">
+          <section className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex flex-col gap-4">
             <div className="flex items-center gap-2.5">
               <span className="w-[26px] h-[26px] rounded-full bg-[#0F1B2D] text-white flex items-center justify-center text-[13px] font-bold">
                 1
@@ -709,7 +891,7 @@ export const NewRouteView: React.FC = () => {
               <h2 className="text-[17px] font-extrabold text-[#0F1B2D] m-0">Motorista</h2>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {MOTORISTAS.map((m) => {
                 const isSelected = motoristaAtivo === m.id;
                 return (
@@ -733,8 +915,9 @@ export const NewRouteView: React.FC = () => {
                       <span className="block font-bold text-sm text-[#0F1B2D] truncate">
                         {m.nome}
                       </span>
-                      <span className={`block text-xs truncate ${isSelected ? 'text-[#334155]' : 'text-[#516074]'}`}>
-                        {m.veiculo} · {m.status}
+                      <span className={`flex items-center gap-1.5 text-xs truncate ${isSelected ? 'text-[#334155]' : 'text-[#516074]'}`}>
+                        <ObterIconeVeiculo tipo={m.veiculoTipo || m.veiculo} size={15} />
+                        <span>{m.veiculo} · {m.status}</span>
                       </span>
                     </span>
                   </button>
@@ -744,7 +927,7 @@ export const NewRouteView: React.FC = () => {
           </section>
 
           {/* SEÇÃO 2: ADICIONAR ENTREGA / PARADA */}
-          <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex flex-col gap-4">
+          <section className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
                 <span className="w-[26px] h-[26px] rounded-full bg-[#0F1B2D] text-white flex items-center justify-center text-[13px] font-bold">
@@ -882,15 +1065,17 @@ export const NewRouteView: React.FC = () => {
               </div>
 
               <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-[#2B3A4F]">
-                Bloco / apartamento
+                WhatsApp do cliente (com DDD)
                 <input
                   type="text"
-                  name="bloco_apartamento_ec"
+                  name="whatsapp_cliente_ec"
+                  inputMode="tel"
+                  maxLength={25}
                   autoComplete="off"
                   spellCheck={false}
-                  value={blocoApto}
-                  onChange={(e) => setBlocoApto(e.target.value)}
-                  placeholder="Ex: Bloco B · Apto 302"
+                  value={whatsappCliente}
+                  onChange={(e) => setWhatsappCliente(e.target.value)}
+                  placeholder="Ex: (48) 99999-9999"
                   className="h-11 border border-[#CBD5E1] rounded-[10px] px-3 text-sm text-[#0F1B2D] bg-white focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/20 focus:border-[#1D4ED8]"
                 />
               </label>
@@ -902,17 +1087,33 @@ export const NewRouteView: React.FC = () => {
                 </label>
                 <PlacesAutocompleteInput
                   value={enderecoTexto}
-                  onChange={setEnderecoTexto}
+                  onChange={(value) => {
+                    setEnderecoTexto(value);
+                    setCoordenadasSelecionadas(null);
+                    setPontoPreview(null);
+                  }}
                   enderecosSalvos={[]}
                   empresaId={empresaId}
+                  coordenadas={coordenadasSelecionadas}
+                  nomeCondominio={nomeCliente}
+                  blocoApto=""
+                  showSaveButton={true}
                   onAddressSelect={handleAddressSelect}
+                  onSalvoComSucesso={(labelSalvo) => {
+                    setMensagemSucesso(`Endereço "${labelSalvo}" salvo no banco para futuras buscas.`);
+                    setTimeout(() => setMensagemSucesso(null), 4000);
+                  }}
                 />
               </div>
 
-              {/* Observação para o motorista */}
+              <details className="rounded-xl border border-slate-200 p-3">
+                <summary className="cursor-pointer text-sm font-semibold">Horários e coleta vinculada (opcional)</summary>
+                <div className="mt-3"><RouteRuleFields value={draftRule} onChange={setDraftRule} type={tipoTarefa} stops={entregasDaRota}/></div>
+              </details>
+              {/* Observação para o motorista (inclua o apartamento aqui) */}
               <div className="sm:col-span-2 flex flex-col gap-2">
                 <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-[#2B3A4F]">
-                  Observação para o motorista
+                  Observação para o motorista (inclua o apartamento aqui)
                   <textarea
                     rows={2}
                     name="observacao_motorista_ec"
@@ -1082,7 +1283,7 @@ export const NewRouteView: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setNomeCliente('');
-                    setBlocoApto('');
+                    setWhatsappCliente('');
                     setEnderecoTexto('');
                     setObservacaoTexto('');
                     setTipoTarefa('entrega');
@@ -1110,7 +1311,7 @@ export const NewRouteView: React.FC = () => {
           </section>
 
           {/* SEÇÃO 3: ENTREGAS DA ROTA */}
-          <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex flex-col gap-3">
+          <section className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
               <div className="flex items-center gap-2.5">
                 <span className="w-[26px] h-[26px] rounded-full bg-[#0F1B2D] text-white flex items-center justify-center text-[13px] font-bold">
@@ -1147,7 +1348,7 @@ export const NewRouteView: React.FC = () => {
                   {otimizarAutomatico && metricasRota.paradasOtimizadas.length > 0 ? (
                     <>
                       <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                      Sequência Otimizada (Rota Inteligente)
+                      {constrained ? (schedulePlan ? 'Sequência conferida' : verifiedSchedule?.error ? 'Revisar condições' : 'Conferindo condições') : 'Sequência Otimizada (Rota Inteligente)'}
                     </>
                   ) : (
                     <>
@@ -1159,9 +1360,52 @@ export const NewRouteView: React.FC = () => {
               </div>
             </div>
 
+            {constrained && <section className="space-y-2 rounded-xl bg-blue-50 p-3 text-sm" aria-label="Planejamento com condições">
+              <label className="block">Saída prevista (horário de Brasília)<input type="datetime-local" value={saidaPrevista} onChange={e=>setSaidaPrevista(e.target.value)} className="ml-2 rounded border p-2"/></label>
+              <div className="flex flex-wrap gap-3"><button type="button" className="font-semibold underline" onClick={()=>setSaidaPrevista(planningNow())}>Usar horário de agora</button><button type="button" className="font-semibold underline" onClick={()=>setScheduleRevision(v=>v+1)}>Recalcular horários</button></div>
+              <p role="status">{schedulePlan ? `Sequência conferida · ${Math.ceil((schedulePlan.finish-ruleDateTime(...saidaPrevista.split('T') as [string,string]))/60000)} min com atendimento e espera (${Math.ceil(schedulePlan.waitingSeconds/60)} min de espera). Previsão sujeita ao trânsito e ao atendimento real.` : verifiedSchedule?.error || 'Calculando horários e vínculos pelas ruas…'}</p>
+            </section>}
             {paradasParaOMapa.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-400 font-medium">
-                Nenhuma parada adicionada ainda. Busque um condomínio acima para adicionar.
+              <div className="py-6 space-y-3">
+                <div className="text-center text-xs text-slate-400 font-medium">
+                  Nenhuma parada adicionada ainda. Busque um condomínio acima para adicionar.
+                </div>
+
+                {ultimaRotaDespachada && ultimaRotaDespachada.paradas.length > 0 && (
+                  <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-lg">📲</span>
+                      <div>
+                        <p className="text-xs font-bold text-emerald-900 m-0">
+                          Última rota enviada ({ultimaRotaDespachada.paradas.length} parada{ultimaRotaDespachada.paradas.length > 1 ? 's' : ''}{ultimaRotaDespachada.motoristaNome ? ` · ${ultimaRotaDespachada.motoristaNome}` : ''})
+                        </p>
+                        <p className="text-[11px] text-emerald-700 m-0">
+                          A rota foi despachada. Você pode reenviar a lista para a gestão interna no WhatsApp ou copiar o texto.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleCopiarRota(ultimaRotaDespachada.paradas)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all cursor-pointer shadow-2xs"
+                        title="Copiar texto da última rota enviada"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Copiar texto</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEnviarWhatsApp(ultimaRotaDespachada.paradas)}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                        title="Reenviar última rota para o WhatsApp"
+                      >
+                        <WhatsAppIcon className="w-3.5 h-3.5 text-white" />
+                        <span>Reenviar última rota para o WhatsApp</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="divide-y divide-[#EAEFF4]">
@@ -1208,6 +1452,11 @@ export const NewRouteView: React.FC = () => {
                         <div className="text-[13px] text-[#2B3A4F] mt-0.5">
                           {parada.enderecoFormatado}
                         </div>
+                        {(parada.janelaData || parada.coletaOrigemId) && <p className="mt-1 text-xs text-blue-800">
+                          {parada.janelaData && `${parada.janelaData.split('-').reverse().join('/')} · ${parada.janelaInicio}–${parada.janelaFim}`}
+                          {parada.coletaOrigemId && ` · Após coleta: ${entregasDaRota.find(p=>p.id===parada.coletaOrigemId)?.nomeLocal || 'ver vínculo'}`}
+                        </p>}
+                        <button type="button" className="mt-1 text-xs font-semibold text-slate-500 underline" onClick={()=>setEditingRule(parada.id)}>Editar condições</button>
                       </div>
 
                       {tagAlerta && (
@@ -1234,18 +1483,44 @@ export const NewRouteView: React.FC = () => {
               </div>
             )}
 
-            <div className="border-t border-[#EAEFF4] pt-3 text-[13px] font-bold text-[#1D4ED8]">
-              {paradasParaOMapa.length > 0 ? `Total: ${paradasParaOMapa.length} parada(s)` : 'Aguardando cadastro de paradas'}
+            <div className="border-t border-[#EAEFF4] pt-3 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-[13px] font-bold text-[#1D4ED8]">
+                {paradasParaOMapa.length > 0 ? `Total: ${paradasParaOMapa.length} parada(s)` : 'Aguardando cadastro de paradas'}
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={paradasParaOMapa.length === 0}
+                  onClick={() => handleCopiarRota(paradasParaOMapa)}
+                  title="Copiar lista de entregas formatada para o WhatsApp"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs"
+                >
+                  <Copy className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Copiar texto</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={paradasParaOMapa.length === 0}
+                  onClick={() => handleEnviarWhatsApp(paradasParaOMapa)}
+                  title="Enviar lista de entregas para o WhatsApp"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs"
+                >
+                  <WhatsAppIcon className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Enviar p/ WhatsApp</span>
+                </button>
+              </div>
             </div>
           </section>
 
         </div>
 
         {/* Coluna Direita: Seções 4 e 5 (Rota Inteligente, Mapa e Despacho) */}
-        <div className="w-full lg:w-[38%] space-y-6 sticky top-24">
+        <div className="w-full lg:w-[38%] space-y-6 sticky top-6">
           
           {/* SEÇÃO 4: ROTA INTELIGENTE & MAPA */}
-          <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex flex-col gap-4">
+          <section className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex flex-col gap-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
@@ -1338,6 +1613,22 @@ export const NewRouteView: React.FC = () => {
               pontoPartida={pontoPartida}
               paradas={paradasParaOMapa}
               pontoPreview={pontoPreview}
+              veiculosAtivos={motoristaSelecionado ? [{
+                id: motoristaSelecionado.id,
+                nome: motoristaSelecionado.nome,
+                veiculo_tipo: normalizarTipoVeiculo(motoristaSelecionado.veiculoTipo, motoristaSelecionado.veiculo),
+                veiculo_modelo: motoristaSelecionado.veiculo,
+                veiculo_placa: '',
+                status: 'em_rota',
+                coordenadas: {
+                  lat: (motoristaSelecionado.latitude_atual && !isNaN(Number(motoristaSelecionado.latitude_atual)))
+                    ? Number(motoristaSelecionado.latitude_atual)
+                    : pontoPartida.coordenadas.lat,
+                  lng: (motoristaSelecionado.longitude_atual && !isNaN(Number(motoristaSelecionado.longitude_atual)))
+                    ? Number(motoristaSelecionado.longitude_atual)
+                    : pontoPartida.coordenadas.lng,
+                }
+              }] : []}
               otimizado={otimizarAutomatico}
             />
 
@@ -1348,7 +1639,7 @@ export const NewRouteView: React.FC = () => {
                   <span className="font-semibold text-[#2B3A4F]">Ordem de cadastro</span>
                   <span className="font-bold text-[#0F1B2D]">
                     {entregasDaRota.length > 0
-                      ? `${metricasRota.distanciaOriginalKm} km · ${formatarTempoMinutos(metricasRota.tempoOriginalMinutos)}`
+                      ? verifiedTotals ? `${metricasRota.distanciaOriginalKm} km · ${formatarTempoMinutos(metricasRota.tempoOriginalMinutos)}` : 'Estimativa viária indisponível'
                       : '0 km · 0 min'}
                   </span>
                 </div>
@@ -1362,7 +1653,7 @@ export const NewRouteView: React.FC = () => {
                   <span className="font-semibold text-[#2B3A4F]">Rota otimizada</span>
                   <span className="font-bold text-[#15803D]">
                     {entregasDaRota.length > 0
-                      ? `${metricasRota.distanciaOtimizadaKm} km · ${formatarTempoMinutos(metricasRota.tempoOtimizadoMinutos)}`
+                      ? verifiedTotals ? `${metricasRota.distanciaOtimizadaKm} km · ${formatarTempoMinutos(metricasRota.tempoOtimizadoMinutos)}` : 'Estimativa viária indisponível'
                       : '0 km · 0 min'}
                   </span>
                 </div>
@@ -1379,6 +1670,13 @@ export const NewRouteView: React.FC = () => {
                 </div>
               </div>
 
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-bold">Tempo de atendimento pelo histórico</p>
+                <p>{serviceEstimate.covered>0 ? `${Math.ceil(serviceEstimate.minutes)} min em ${serviceEstimate.covered} de ${serviceEstimate.total} paradas com registros reais` : 'Sem histórico de atendimento para estas paradas.'}</p>
+                {serviceEstimate.covered>0 && <p className="text-xs mt-1">{serviceEstimate.driverSpecific} parada(s) com histórico deste motorista; demais usam registros reais do local.</p>}
+                <p className="font-semibold mt-2">{serviceEstimate.complete && verifiedTotals ? `Deslocamento + atendimento: ${formatarTempoMinutos(Math.ceil(selectedMin+serviceEstimate.minutes))}` : 'Jornada total ainda sem estimativa completa.'}</p>
+                <p className="text-xs mt-1">Confira a jornada e as pausas do motorista. O histórico melhora as estimativas; não garante o horário de término.</p>
+              </div>
               {/* Card Destaque Verde de Economia */}
               <div className="flex items-center gap-3 p-3.5 rounded-xl bg-[#DDF3E4] text-[#14532D]">
                 <div className="text-2xl font-extrabold leading-none">
@@ -1386,29 +1684,42 @@ export const NewRouteView: React.FC = () => {
                     ? '—'
                     : metricasRota.economiaKm > 0
                     ? `-${metricasRota.economiaKm} km`
-                    : '100%'}
+                    : '—'}
                 </div>
                 <div className="text-[13px] font-semibold leading-tight">
                   {entregasDaRota.length === 0
                     ? 'Adicione paradas para traçar a rota e calcular a economia.'
+                    : !verifiedTotals ? 'Aguardando estimativa pelas ruas. Não inclui atendimento nas paradas.'
                     : metricasRota.economiaKm > 0
                     ? `Economia de ${metricasRota.percentualEconomiaKm}% na distância e ${metricasRota.economiaTempoMinutos} min previstos a menos com a Rota Inteligente!`
-                    : `Trajeto ideal traçado · ${metricasRota.distanciaOtimizadaKm} km no trajeto mais eficiente.`}
+                    : `Deslocamento pelas ruas · ${metricasRota.distanciaOtimizadaKm} km. Atendimento nas paradas não incluído.`}
                 </div>
               </div>
             </div>
           </section>
 
           {/* SEÇÃO 5: BOTÕES DE DESPACHO */}
-          <section className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex flex-col gap-3">
+          <section className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex flex-col gap-3">
             <button
               type="button"
               disabled={despachando || !motoristaSelecionado} onClick={handleEnviarParaMotorista}
               className="h-12 rounded-[10px] bg-[#C2410C] hover:bg-[#9A3412] active:scale-98 text-white font-bold text-[15px] transition-all shadow-md shadow-[#C2410C]/25 flex items-center justify-center gap-2 cursor-pointer"
             >
               <Send className="w-4 h-4" />
-              <span>Enviar rota para {motoristaSelecionado?.nome.split(' ')[0] || 'o motorista'}</span>
+              <span>Enviar serviços para {motoristaSelecionado?.nome.split(' ')[0] || 'o motorista'}</span>
             </button>
+
+            {ultimaRotaDespachada && ultimaRotaDespachada.paradas.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleEnviarWhatsApp(ultimaRotaDespachada.paradas)}
+                className="h-10 rounded-[10px] border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-bold text-xs transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-2xs"
+                title="Reenviar última rota despachada para o WhatsApp da equipe"
+              >
+                <WhatsAppIcon className="w-3.5 h-3.5 text-emerald-600" />
+                <span>📲 Reenviar última rota para o WhatsApp</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -1418,6 +1729,8 @@ export const NewRouteView: React.FC = () => {
                   entregasDaRota,
                   observacaoTexto,
                   otimizarAutomatico,
+                  condicoesNovoPedido: draftRule,
+                  saidaPrevista,
                   pontoPartida,
                   pontoPartidaTexto,
                   timestamp: Date.now(),

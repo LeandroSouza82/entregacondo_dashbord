@@ -71,7 +71,7 @@ BEGIN
     END IF;
 
     -- 3. Cálculo de hash do payload para conferência de consistência
-    v_payload_hash := encode(digest(p_dados::text, 'sha256'), 'hex');
+    v_payload_hash := encode(sha256(convert_to(p_dados::text, 'UTF8')), 'hex');
 
     -- 4. Serialização sob concorrência: bloqueia a linha do motorista
     SELECT * INTO v_motorista
@@ -148,7 +148,9 @@ BEGIN
         tempo_otimizado_minutos,
         percentual_economia_km,
         percentual_economia_tempo,
-        ordem_paradas_json
+        ordem_paradas_json,
+        metricas_fonte,
+        metricas_atualizadas_em
     ) VALUES (
         v_empresa_id,
         v_motorista_id,
@@ -161,12 +163,16 @@ BEGIN
         v_tempo_otim,
         v_economia_dist,
         v_economia_tempo,
-        v_ordem_json
+        v_ordem_json,
+        CASE WHEN p_dados->>'metricas_fonte'='mapbox_directions_planejamento' AND v_distancia_otim>0 AND v_tempo_otim>0 THEN 'mapbox_directions_planejamento' END,
+        CASE WHEN p_dados->>'metricas_fonte'='mapbox_directions_planejamento' AND v_distancia_otim>0 AND v_tempo_otim>0 THEN now() END
     )
     RETURNING id INTO v_rota_id;
 
     -- 8. Inserção das Entregas/Paradas vinculadas à rota
     FOR v_parada IN SELECT * FROM jsonb_to_recordset(v_paradas) AS x(
+        id UUID,
+        janela_data DATE, janela_inicio TIME, janela_fim TIME, coleta_origem_id UUID, tempo_atendimento_previsto_min INT,
         cliente_endereco_id UUID,
         destinatario_nome TEXT,
         destinatario_telefone TEXT,
@@ -192,6 +198,7 @@ BEGIN
         END IF;
 
         INSERT INTO public.entregas (
+            id,janela_data,janela_inicio,janela_fim,coleta_origem_id,tempo_atendimento_previsto_min,
             empresa_id,
             rota_id,
             motorista_id,
@@ -209,6 +216,7 @@ BEGIN
             ordem_na_rota,
             observacoes_gestor
         ) VALUES (
+            COALESCE(v_parada.id,gen_random_uuid()),v_parada.janela_data,v_parada.janela_inicio,v_parada.janela_fim,v_parada.coleta_origem_id,COALESCE(v_parada.tempo_atendimento_previsto_min,0),
             v_empresa_id,
             v_rota_id,
             v_motorista_id,
@@ -227,6 +235,10 @@ BEGIN
             v_parada.observacoes_gestor
         );
     END LOOP;
+
+    PERFORM ec_private.validar_agenda(
+      (SELECT array_agg(id ORDER BY ordem_na_rota,id) FROM public.entregas WHERE rota_id=v_rota_id),
+      p_dados->'agenda',(p_dados->>'planejamento_saida_em')::timestamptz,false);
 
     -- 9. Atualiza status do motorista para em_rota
     UPDATE public.motoristas

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RotateCw, Inbox } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { requireCompanyId } from '../lib/company';
+import { requireCompanyId, hasActiveSupabaseSession } from '../lib/company';
 
 export function CompanyRecords({ table, title }: { table: 'entregas' | 'motoristas' | 'clientes_enderecos'; title: string }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
@@ -14,6 +14,10 @@ export function CompanyRecords({ table, title }: { table: 'entregas' | 'motorist
     async function load() {
       setLoading(true);
       try {
+        if (!(await hasActiveSupabaseSession())) {
+          if (active) setRows([]);
+          return;
+        }
         const company = await requireCompanyId();
         const { data, error } = await supabase
           .from(table)
@@ -41,7 +45,7 @@ export function CompanyRecords({ table, title }: { table: 'entregas' | 'motorist
   }, [table, revision]);
 
   return (
-    <section className="bg-white border border-slate-200/90 rounded-2xl p-6 space-y-5 shadow-card animate-fadeIn">
+    <section className="bg-white border border-gray-300 rounded-2xl p-6 space-y-5 shadow-card animate-fadeIn">
       <header className="flex items-center justify-between pb-4 border-b border-slate-100">
         <div>
           <h1 className="text-xl font-bold text-navy-900">{title}</h1>

@@ -24,7 +24,7 @@ export const FiltrosSolicitacoes: React.FC<FiltrosSolicitacoesProps> = ({
   totalGeral,
 }) => {
   return (
-    <div className="bg-white border border-[#E1E6ED] rounded-2xl p-4 shadow-card flex flex-wrap items-center justify-between gap-4">
+    <div className="bg-white border border-gray-300 rounded-2xl p-4 shadow-card flex flex-wrap items-center justify-between gap-4">
       {/* Abas de Status */}
       <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100/80 rounded-xl">
         <button

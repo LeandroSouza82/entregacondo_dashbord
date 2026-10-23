@@ -99,6 +99,40 @@ export async function concurrencyRegressions(admin,connect){
   await b.query('COMMIT');
   assert.equal((await admin.query('SELECT status_analise FROM public.veiculos_motoristas WHERE id=$1',[car])).rows[0].status_analise,'pendente');
   reports.push('remoção concorrente invalida aprovação recém-concluída');
+  // Restore complete approved evidence for collection tests in this disposable database.
+  const restored=await reservation(a);await metadata(admin,restored);
+  assert.equal((await a.query("SELECT public.anexar_documento_veiculo($1,'foto_veiculo','frente.jpg',$2,500,'frente') AS r",[car,restored.storage_path])).rows[0].r.sucesso,true);
+  const restoredRevision=(await admin.query('SELECT revisao FROM public.veiculos_motoristas WHERE id=$1',[car])).rows[0].revisao;
+  assert.equal((await manager.query('SELECT public.analisar_veiculo_motorista($1,true,$2) AS r',[car,restoredRevision])).rows[0].r.sucesso,true);
+  const secondManager=await actor(await connect(),MANAGER);
+  try {
+   const driverId='c1000000-0000-0000-0000-000000000001';
+   await admin.query("UPDATE public.motoristas SET latitude_atual=-27.5,longitude_atual=-48.5,localizacao_atualizada_em=now() WHERE id=$1",[driverId]);
+   const address=(await admin.query("INSERT INTO public.clientes_enderecos(empresa_id,nome_identificador,endereco_completo,numero,bairro,cidade,cep,latitude,longitude) VALUES($1,'Concorrência','Rua teste','10','Centro','Teste','00000-000',-27.51,-48.51) RETURNING id",[COMPANY])).rows[0].id;
+   const route=(await admin.query("INSERT INTO public.rotas_planejadas(empresa_id,motorista_id,status,idempotency_key,distancia_original_km,tempo_original_minutos,distancia_otimizada_km,tempo_otimizado_minutos,percentual_economia_km,percentual_economia_tempo,ordem_paradas_json) VALUES($1,$2,'em_execucao','CONCURRENT-ACTIVE',5,10,5,10,0,0,'[]') RETURNING id",[COMPANY,driverId])).rows[0].id;
+   const old=(await admin.query("INSERT INTO public.entregas(empresa_id,rota_id,motorista_id,cliente_endereco_id,codigo_rastreio,destinatario_nome,status,ordem_na_rota) VALUES($1,$2,$3,$4,'CONCURRENT-OLD','Existing','atribuida',1) RETURNING id",[COMPANY,route,driverId,address])).rows[0].id;
+   const payload={empresa_id:COMPANY,motorista_id:driverId,idempotency_key:'CONCURRENT-SAME',paradas:[{cliente_endereco_id:address,tipo_tarefa:'coleta',destinatario_nome:'Collection'}]};
+   async function snapshot(){return (await admin.query("SELECT jsonb_agg(jsonb_build_object('id',id,'status',status,'ordem_na_rota',ordem_na_rota,'chegada_em',chegada_em) ORDER BY ordem_na_rota) AS r FROM public.entregas WHERE rota_id=$1",[route])).rows[0].r;}
+   const plan={rota_id:route,origem:{lat:-27.5,lng:-48.5},snapshot:await snapshot(),ordem:['nova:0',old],metricas:{fonte:'mapbox_directions_restante',distancia_km:5,tempo_minutos:10}};
+   const pidSecond=(await secondManager.query('SELECT pg_backend_pid() AS id')).rows[0].id;
+   await manager.query('BEGIN');await secondManager.query('BEGIN');
+   const first=(await manager.query('SELECT public.enviar_servicos_motorista($1,$2) AS r',[payload,plan])).rows[0].r;
+   assert.equal(first.sucesso,true,JSON.stringify(first));
+   const duplicate=secondManager.query('SELECT public.enviar_servicos_motorista($1,$2) AS r',[payload,plan]);
+   await waitForLock(admin,pidSecond);await manager.query('COMMIT');
+   assert.equal((await duplicate).rows[0].r.idempotente,true);await secondManager.query('COMMIT');
+   assert.equal((await admin.query('SELECT count(*)::int AS n FROM public.entregas WHERE rota_id=$1',[route])).rows[0].n,2);
+   reports.push('envio concorrente da mesma coleta é idempotente entre conexões');
+   plan.snapshot=await snapshot();plan.ordem=['nova:0',...plan.snapshot.map(t=>t.id)];
+   await manager.query('BEGIN');await secondManager.query('BEGIN');
+   assert.equal((await manager.query('SELECT public.enviar_servicos_motorista($1,$2) AS r',[{...payload,idempotency_key:'CONCURRENT-FIRST'},plan])).rows[0].r.sucesso,true);
+   const stale=secondManager.query('SELECT public.enviar_servicos_motorista($1,$2) AS r',[{...payload,idempotency_key:'CONCURRENT-SECOND'},plan]);
+   await waitForLock(admin,pidSecond);await manager.query('COMMIT');
+   assert.equal((await stale).rows[0].r.codigo,'PLANO_DESATUALIZADO');await secondManager.query('COMMIT');
+   assert.equal((await admin.query('SELECT count(*)::int AS n FROM public.entregas WHERE rota_id=$1',[route])).rows[0].n,3);
+   reports.push('coletas simultâneas distintas exigem recálculo sem perder serviços');
+  } finally {await secondManager.query('ROLLBACK');}
+
  }finally{
   for(const c of [a,b,manager])await c.query('ROLLBACK').catch(()=>{});
  }

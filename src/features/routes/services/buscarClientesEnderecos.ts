@@ -1,4 +1,5 @@
-import { requireCompanyId } from '../../../lib/company';
+import { coordenadasValidas, resultadoEnderecoCompativel } from './addressCoordinates';
+import { requireCompanyId, hasActiveSupabaseSession } from '../../../lib/company';
 import { supabase, isSupabaseConfigured } from '../../../lib/supabase';
 import type { ClienteEnderecoItem } from '../types/clienteEndereco';
 
@@ -96,6 +97,12 @@ export async function buscarSugestoesNominatim(termo: string): Promise<SugestaoE
     if (!Array.isArray(items)) return [];
 
     return items
+      .filter((item: any) => {
+        const city = item.address?.city || item.address?.town || item.address?.municipality || '';
+        return CIDADES_GRANDE_FLORIANOPOLIS.includes(normalizarTexto(city)) &&
+          resultadoEnderecoCompativel(limpo, item.display_name || '', item.address) &&
+          coordenadasValidas({lat: Number.parseFloat(item.lat), lng: Number.parseFloat(item.lon)});
+      })
       .map((item: any) => {
         const lat = parseFloat(item.lat);
         const lng = parseFloat(item.lon);
@@ -130,6 +137,10 @@ export async function buscarClientesEnderecos(termo: string, empresaId?: string)
   if (!cleaned) return [];
   if (!isSupabaseConfigured) return [];
   try {
+    if (!(await hasActiveSupabaseSession())) {
+      return [];
+    }
+
     let id = empresaId;
     if (!id && typeof window !== 'undefined') {
       id = localStorage.getItem('ec_active_company_id') || undefined;
@@ -142,26 +153,6 @@ export async function buscarClientesEnderecos(termo: string, empresaId?: string)
       }
     }
 
-    let baseQuery = supabase.from('clientes_enderecos').select('*');
-    if (id) {
-      baseQuery = baseQuery.eq('empresa_id', id);
-    }
-
-    // 1. Tenta consulta flexível com colunas completas
-    try {
-      const { data: dadosFlex, error: errFlex } = await baseQuery
-        .or(`nome.ilike.%${cleaned}%,nome_identificador.ilike.%${cleaned}%,endereco.ilike.%${cleaned}%,endereco_completo.ilike.%${cleaned}%`)
-        .order('total_entregas_realizadas', { ascending: false })
-        .limit(15);
-
-      if (!errFlex && dadosFlex && dadosFlex.length > 0) {
-        return dadosFlex;
-      }
-    } catch {
-      // Segue para fallback seguro
-    }
-
-    // 2. Fallback resiliente usando as colunas canônicas da tabela para garantir zero 400 no PostgREST
     let safeQuery = supabase.from('clientes_enderecos').select('*');
     if (id) {
       safeQuery = safeQuery.eq('empresa_id', id);
@@ -177,8 +168,7 @@ export async function buscarClientesEnderecos(termo: string, empresaId?: string)
     }
 
     return dadosCanonica || [];
-  } catch (err) {
-    // Tratamento silencioso
+  } catch {
     return [];
   }
 }

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS public.clientes_enderecos (
     empresa_id UUID NOT NULL REFERENCES public.empresas(id) ON DELETE CASCADE,
     nome_identificador VARCHAR(255) NOT NULL,
     destinatario_padrao VARCHAR(255),
+    whatsapp_cliente VARCHAR(30),
     endereco_completo TEXT NOT NULL,
     numero VARCHAR(50) NOT NULL,
     bairro VARCHAR(100) NOT NULL,
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.clientes_enderecos (
     cep VARCHAR(20) NOT NULL,
     latitude NUMERIC(10, 7) NOT NULL,
     longitude NUMERIC(10, 7) NOT NULL,
-    tempo_medio_minutos NUMERIC(5, 2) NOT NULL DEFAULT 15.00,
+    tempo_medio_minutos NUMERIC(8, 2) NOT NULL DEFAULT 15.00,
     total_entregas_realizadas INT NOT NULL DEFAULT 0,
     tipo_local VARCHAR(50) NOT NULL DEFAULT 'condominio_horizontal'
         CHECK (tipo_local IN ('condominio_horizontal', 'edificio_vertical', 'comercial', 'casa_rua')),
@@ -42,6 +43,8 @@ CREATE TABLE IF NOT EXISTS public.rotas_planejadas (
     percentual_economia_km NUMERIC(5, 2) NOT NULL,
     percentual_economia_tempo NUMERIC(5, 2) NOT NULL,
     ordem_paradas_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metricas_fonte TEXT,
+    metricas_atualizadas_em TIMESTAMPTZ,
     configuracao_navegacao JSONB NOT NULL DEFAULT '{}'::jsonb,
     iniciada_em TIMESTAMPTZ,
     concluida_em TIMESTAMPTZ,
@@ -94,3 +97,9 @@ CREATE TABLE IF NOT EXISTS public.historico_atendimentos (
     motivo_falha TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.clientes_enderecos ADD COLUMN IF NOT EXISTS place_id VARCHAR(255);
+CREATE OR REPLACE VIEW public.saved_addresses WITH (security_invoker=true) AS
+SELECT id,empresa_id,nome_identificador AS label,endereco_completo AS full_address,latitude AS lat,longitude AS lng,place_id,created_at FROM public.clientes_enderecos;
+REVOKE ALL ON public.saved_addresses FROM anon;
+GRANT SELECT ON public.saved_addresses TO authenticated;

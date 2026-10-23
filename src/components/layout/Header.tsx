@@ -9,8 +9,6 @@ Plus,
 interface HeaderProps {
   onOpenNewDelivery?: () => void;
   onOpenOptimizer?: () => void;
-  driversActiveCount: number;
-  driversInRouteCount: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({

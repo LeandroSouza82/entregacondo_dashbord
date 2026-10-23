@@ -3,30 +3,14 @@ import Map, { Marker, Source, Layer, Popup, NavigationControl, type MapRef } fro
 import type { PontoParada, PontoCoordenada } from '../../types/logistics';
 import type { Feature, MultiLineString } from 'geojson';
 import { fetchRoadGeometry, type RoadCoordinate } from '../../features/routes/services/roadGeometry';
-import { MapPin, Map as MapIcon, Globe, Moon } from 'lucide-react';
+import { MapPin, Maximize2, Minimize2 } from 'lucide-react';
+import { VehicleMapMarker } from './VehicleMapMarker';
+import { IconeSedePartida } from '../../assets/icons/vehicles/VehicleIcons';
+import { type MotoristaVeiculoMapa, calcularBearing } from '../../features/routes/utils/vehicleMovement';
+import { DEFAULT_MAP_STYLE } from './mapStyles';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || '';
 
-export const MAP_STYLES = [
-  {
-    id: 'streets',
-    label: 'Ruas / Logística',
-    icon: MapIcon,
-    styleUrl: 'mapbox://styles/mapbox/streets-v12',
-  },
-  {
-    id: 'satellite',
-    label: 'Satélite',
-    icon: Globe,
-    styleUrl: 'mapbox://styles/mapbox/satellite-streets-v12',
-  },
-  {
-    id: 'dark',
-    label: 'Dark / Noturno',
-    icon: Moon,
-    styleUrl: 'mapbox://styles/mapbox/navigation-night-v1',
-  },
-];
 
 interface RouteMapProps {
   pontoPartida: {
@@ -40,7 +24,11 @@ interface RouteMapProps {
   } | null;
   otimizado?: boolean;
   showStartPoint?: boolean;
-  routeOrigins?: Record<string, { latitude?: number; longitude?: number; retornar_ao_inicio?: boolean }>;
+  routeOrigins?: Record<string, { latitude?: number; longitude?: number; origem_atual?: { lat?: number; lng?: number }; retornar_ao_inicio?: boolean }>;
+  veiculosAtivos?: MotoristaVeiculoMapa[];
+  onVeiculoClick?: (veiculo: MotoristaVeiculoMapa) => void;
+  /** URL do estilo Mapbox (controlado pelo componente pai). */
+  estiloMapa?: string;
 }
 
 export const RouteMap: React.FC<RouteMapProps> = ({
@@ -50,9 +38,38 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   otimizado = true,
   showStartPoint = true,
   routeOrigins,
+  veiculosAtivos = [],
+  onVeiculoClick,
+  estiloMapa = DEFAULT_MAP_STYLE,
 }) => {
   const mapRef = useRef<MapRef | null>(null);
-  const [estiloAtual, setEstiloAtual] = useState<string>('mapbox://styles/mapbox/streets-v12');
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const estiloAtual = estiloMapa;
+  const [veiculoSelecionadoId, setVeiculoSelecionadoId] = useState<string | null>(null);
+
+  // Sincroniza o estado com a Fullscreen API (inclui saída via tecla Esc)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+      requestAnimationFrame(() => mapRef.current?.resize());
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const alternarTelaCheia = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await containerRef.current?.requestFullscreen();
+      }
+    } catch (err) {
+      console.warn('Não foi possível alternar o modo de tela cheia:', err);
+    }
+  }, []);
+  const posicoesAnterioresRef = useRef<Record<string, { lat: number; lng: number }>>({});
   const [popupInfo, setPopupInfo] = useState<{
     longitude: number;
     latitude: number;
@@ -60,6 +77,25 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     subtitulo: string;
     tempo?: number;
   } | null>(null);
+
+  // Calcula e memoriza dinamicamente o bearing (sentido da via) de cada veículo
+  const veiculosComBearing = useMemo(() => {
+    return (veiculosAtivos || []).map((v) => {
+      const prev = posicoesAnterioresRef.current[v.id];
+      let bearing = v.coordenadas.bearing ?? 0;
+      if (prev && (prev.lat !== v.coordenadas.lat || prev.lng !== v.coordenadas.lng)) {
+        bearing = calcularBearing(prev.lat, prev.lng, v.coordenadas.lat, v.coordenadas.lng);
+      }
+      posicoesAnterioresRef.current[v.id] = { lat: v.coordenadas.lat, lng: v.coordenadas.lng };
+      return {
+        ...v,
+        coordenadas: {
+          ...v.coordenadas,
+          bearing,
+        },
+      };
+    });
+  }, [veiculosAtivos]);
 
   // Initial Viewport centrado com useMemo
   const initialViewState = useMemo(() => {
@@ -75,9 +111,12 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   const [routeGeoJson, setRouteGeoJson] = useState<Feature<MultiLineString> | null>(null);
   const [roadError, setRoadError] = useState<string | null>(null);
   const plannedOrigins = Object.entries(routeOrigins || {}).flatMap(([id, origin]) => {
-    const { latitude, longitude } = origin;
+    const latitude = origin.origem_atual?.lat ?? origin.latitude;
+    const longitude = origin.origem_atual?.lng ?? origin.longitude;
+    const returnCoordinates: RoadCoordinate | undefined = typeof origin.latitude === 'number' && typeof origin.longitude === 'number'
+      ? [origin.longitude, origin.latitude] : undefined;
     return typeof latitude === 'number' && typeof longitude === 'number' && Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
-      ? [{ id, coordinates: [longitude, latitude] as RoadCoordinate, roundTrip: origin.retornar_ao_inicio === true }] : [];
+      ? [{ id, coordinates: [longitude, latitude] as RoadCoordinate, returnCoordinates, roundTrip: origin.retornar_ao_inicio === true }] : [];
   });
   const groups: Record<string, RoadCoordinate[]> = {};
   for (const parada of paradas) {
@@ -87,11 +126,12 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   for (const origin of plannedOrigins) {
     if (!groups[origin.id]?.length) continue;
     groups[origin.id].unshift(origin.coordinates);
-    if (origin.roundTrip) groups[origin.id].push(origin.coordinates);
+    if (origin.roundTrip && origin.returnCoordinates) groups[origin.id].push(origin.returnCoordinates);
   }
   const geometryKey = JSON.stringify(showStartPoint
     ? [[[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat], ...paradas.map(p => [p.coordenadas.lng, p.coordenadas.lat]), ...(pontoPreview ? [[pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]] : [])]]
     : Object.values(groups));
+
   useEffect(() => {
     const controller = new AbortController();
 
@@ -137,6 +177,7 @@ export const RouteMap: React.FC<RouteMapProps> = ({
     ...(showStartPoint ? [[pontoPartida.coordenadas.lng, pontoPartida.coordenadas.lat]] : plannedOrigins.map(o => o.coordinates)),
     ...paradas.map(p => [p.coordenadas.lng, p.coordenadas.lat]),
     ...(pontoPreview ? [[pontoPreview.coordenadas.lng, pontoPreview.coordenadas.lat]] : []),
+    ...veiculosComBearing.map(v => [v.coordenadas.lng, v.coordenadas.lat]),
   ]);
   const fitRouteBounds = useCallback(() => {
     if (!mapRef.current) return;
@@ -204,28 +245,60 @@ export const RouteMap: React.FC<RouteMapProps> = ({
 
   // Marcadores das paradas memoizados para garantir renderização de alta performance
   const renderedMarkers = useMemo(() => {
-    return paradas.map((parada, idx) => (
-      <Marker
-        key={parada.id}
-        longitude={parada.coordenadas.lng}
-        latitude={parada.coordenadas.lat}
-        anchor="center"
-        onClick={(e: { originalEvent: MouseEvent }) => {
-          e.originalEvent.stopPropagation();
-          setPopupInfo({
-            longitude: parada.coordenadas.lng,
-            latitude: parada.coordenadas.lat,
-            titulo: `Parada ${parada.sequencia || idx + 1}: ${parada.destinatario}`,
-            subtitulo: `${parada.nomeLocal} · ${parada.enderecoFormatado}`,
-            tempo: parada.tempoMedioAtendimentoMinutos,
-          });
-        }}
-      >
-        <div style={{backgroundColor: parada.status === 'entregue' ? '#15803D' : parada.status === 'tentativa_falha' ? '#DC2626' : parada.status === 'cancelada' ? '#64748B' : '#1D4ED8'}} className="w-7 h-7 rounded-full text-white font-sans text-xs font-black flex items-center justify-center shadow-lg border-2 border-white cursor-pointer hover:scale-110 transition-transform">
-          {parada.sequencia || idx + 1}
-        </div>
-      </Marker>
-    ));
+    return paradas.map((parada, idx) => {
+      const corFundo =
+        parada.status === 'entregue'
+          ? 'from-[#15803D] to-[#166534]'
+          : parada.status === 'tentativa_falha'
+          ? 'from-[#DC2626] to-[#991B1B]'
+          : parada.status === 'cancelada'
+          ? 'from-[#64748B] to-[#475569]'
+          : 'from-[#1D4ED8] to-[#1E3A8A]';
+      const corPonta =
+        parada.status === 'entregue'
+          ? '#166534'
+          : parada.status === 'tentativa_falha'
+          ? '#991B1B'
+          : parada.status === 'cancelada'
+          ? '#475569'
+          : '#1E3A8A';
+
+      return (
+        <Marker
+          key={parada.id}
+          longitude={parada.coordenadas.lng}
+          latitude={parada.coordenadas.lat}
+          anchor="bottom"
+          onClick={(e: { originalEvent: MouseEvent }) => {
+            e.originalEvent.stopPropagation();
+            setPopupInfo({
+              longitude: parada.coordenadas.lng,
+              latitude: parada.coordenadas.lat,
+              titulo: `Parada ${parada.sequencia || idx + 1}: ${parada.destinatario}`,
+              subtitulo: `${parada.nomeLocal} · ${parada.enderecoFormatado}`,
+              tempo: parada.tempoMedioAtendimentoMinutos,
+            });
+          }}
+        >
+          <div className="relative flex flex-col items-center cursor-pointer group hover:scale-110 transition-transform select-none">
+            <div
+              className={`w-7 h-7 rounded-xl bg-gradient-to-br ${corFundo} text-white font-sans text-xs font-black flex items-center justify-center shadow-lg border-2 border-white ring-2 ring-[#0F1B2D]/10 z-10`}
+            >
+              {parada.sequencia || idx + 1}
+            </div>
+            <svg
+              width="10"
+              height="6"
+              viewBox="0 0 10 6"
+              fill="none"
+              className="-mt-0.5 drop-shadow-xs"
+            >
+              <path d="M5 6L0.5 0H9.5L5 6Z" fill={corPonta} stroke="#FFFFFF" strokeWidth="1" />
+            </svg>
+          </div>
+        </Marker>
+      );
+    });
   }, [paradas]);
 
   // Fallback caso não haja token válido
@@ -243,37 +316,26 @@ export const RouteMap: React.FC<RouteMapProps> = ({
   }
 
   return (
-    <div className="relative w-full rounded-2xl overflow-hidden border border-[#E1E6ED] bg-white shadow-card">
+    <div
+      ref={containerRef}
+      className={`relative w-full overflow-hidden border border-gray-300 bg-white shadow-card ${
+        isFullscreen ? 'h-screen flex flex-col rounded-none' : 'rounded-2xl'
+      }`}
+    >
       {roadError && <div role="status" className="p-2 text-sm text-amber-900 bg-amber-50">{roadError}</div>}
-      {/* Seletor Flutuante de Estilos de Camada */}
-      <div className="absolute top-3 left-3 z-10 flex items-center p-1 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl shadow-md gap-1">
-        {MAP_STYLES.map((st) => {
-          const Icon = st.icon;
-          const isActive = estiloAtual === st.styleUrl;
-          return (
-            <button
-              key={st.id}
-              data-testid={`map-style-${st.id}`}
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setEstiloAtual(st.styleUrl);
-              }}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                isActive
-                  ? 'bg-navy-900 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-navy-900 hover:bg-slate-100/80'
-              }`}
-              title={`Alternar visualização para ${st.label}`}
-            >
-              <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-400' : 'text-slate-400'}`} />
-              <span>{st.label}</span>
-            </button>
-          );
-        })}
-      </div>
 
-      <div className="w-full h-[280px] md:h-[300px]">
+      {/* Botão de Tela Cheia */}
+      <button
+        type="button"
+        onClick={alternarTelaCheia}
+        aria-label={isFullscreen ? 'Sair da tela cheia' : 'Abrir mapa em tela cheia'}
+        title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+        className="absolute top-3 right-3 z-10 p-2 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-lg shadow-md text-slate-600 hover:text-navy-900 hover:bg-white transition-colors cursor-pointer"
+      >
+        {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+      </button>
+
+      <div className={`w-full ${isFullscreen ? 'flex-1 min-h-0' : 'h-[280px] md:h-[300px]'}`}>
         <Map
           ref={mapRef}
           initialViewState={initialViewState}
@@ -307,33 +369,86 @@ export const RouteMap: React.FC<RouteMapProps> = ({
           <NavigationControl position="bottom-right" showCompass={false} />
 
           {/* Marcador Ponto de Partida */}
-          {showStartPoint && <Marker
-            longitude={pontoPartida.coordenadas.lng}
-            latitude={pontoPartida.coordenadas.lat}
-            anchor="center"
-            onClick={(e: { originalEvent: MouseEvent }) => {
-              e.originalEvent.stopPropagation();
-              setPopupInfo({
-                longitude: pontoPartida.coordenadas.lng,
-                latitude: pontoPartida.coordenadas.lat,
-                titulo: 'Ponto de Partida',
-                subtitulo: pontoPartida.nome,
-              });
-            }}
-          >
-            <div
-              data-testid="marker-inicio"
-              className="bg-[#0F1B2D] text-white font-sans text-[10px] font-bold px-2 py-1 rounded-md shadow-md border-2 border-white cursor-pointer hover:scale-105 transition-transform"
+          {showStartPoint && (
+            <Marker
+              longitude={pontoPartida.coordenadas.lng}
+              latitude={pontoPartida.coordenadas.lat}
+              anchor="bottom"
+              onClick={(e: { originalEvent: MouseEvent }) => {
+                e.originalEvent.stopPropagation();
+                setPopupInfo({
+                  longitude: pontoPartida.coordenadas.lng,
+                  latitude: pontoPartida.coordenadas.lat,
+                  titulo: 'Ponto de Partida',
+                  subtitulo: pontoPartida.nome,
+                });
+              }}
             >
-              Início
-            </div>
-          </Marker>}
-
-          {!showStartPoint && plannedOrigins.map(origin => (
-            <Marker key={origin.id} longitude={origin.coordinates[0]} latitude={origin.coordinates[1]} anchor="center">
-              <div title="Posição do motorista no momento da organização" className="rounded-md bg-navy-900 text-white text-xs px-2 py-1 border-2 border-white">Origem do motorista</div>
+              <div
+                data-testid="marker-inicio"
+                className="flex flex-col items-center cursor-pointer hover:scale-105 transition-transform select-none"
+              >
+                <div className="bg-gradient-to-r from-[#0F1B2D] to-[#132137] text-white font-sans text-[10px] font-bold pl-1.5 pr-2.5 py-1 rounded-xl shadow-lg border-2 border-white flex items-center gap-1.5 ring-2 ring-[#0F1B2D]/15">
+                  <span className="w-4 h-4 rounded-md bg-gradient-to-br from-[#EA580C] to-[#C2410C] flex items-center justify-center text-white shadow-2xs">
+                    <IconeSedePartida size={11} />
+                  </span>
+                  <span className="tracking-tight">Início</span>
+                </div>
+                <svg
+                  width="10"
+                  height="6"
+                  viewBox="0 0 10 6"
+                  fill="none"
+                  className="-mt-0.5 drop-shadow-xs"
+                >
+                  <path d="M5 6L0.5 0H9.5L5 6Z" fill="#0F1B2D" stroke="#FFFFFF" strokeWidth="1" />
+                </svg>
+              </div>
             </Marker>
+          )}
+
+          {/* Marcadores de Origem do Motorista (apenas se o veículo não estiver ativo) */}
+          {!showStartPoint && plannedOrigins
+            .filter(origin => !veiculosComBearing.some(v => v.rota_id === origin.id))
+            .map(origin => (
+              <Marker key={origin.id} longitude={origin.coordinates[0]} latitude={origin.coordinates[1]} anchor="bottom">
+                <div
+                  title="Posição do motorista no momento da organização"
+                  className="flex flex-col items-center select-none"
+                >
+                  <div className="rounded-xl bg-gradient-to-r from-[#0F1B2D] to-[#132137] text-white text-[10px] font-bold pl-1.5 pr-2.5 py-1 border-2 border-white shadow-md flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-md bg-gradient-to-br from-[#EA580C] to-[#C2410C] flex items-center justify-center text-white">
+                      <IconeSedePartida size={11} />
+                    </span>
+                    <span>Origem do motorista</span>
+                  </div>
+                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" className="-mt-0.5">
+                    <path d="M5 6L0.5 0H9.5L5 6Z" fill="#0F1B2D" stroke="#FFFFFF" strokeWidth="1" />
+                  </svg>
+                </div>
+              </Marker>
+            ))}
+
+          {/* Veículos em Tempo Real sobre a Rota (Moto, Carro ou Caminhão) */}
+          {veiculosComBearing.map(veiculo => (
+            <VehicleMapMarker
+              key={veiculo.id}
+              veiculo={veiculo}
+              selecionado={veiculoSelecionadoId === veiculo.id}
+              onClick={(v) => {
+                setVeiculoSelecionadoId(v.id);
+                setPopupInfo({
+                  longitude: v.coordenadas.lng,
+                  latitude: v.coordenadas.lat,
+                  titulo: `${v.nome} (${v.veiculo_tipo.toUpperCase()})`,
+                  subtitulo: `${v.veiculo_modelo} · ${v.veiculo_placa ? `Placa: ${v.veiculo_placa}` : 'Em operação'}`,
+                  tempo: v.status === 'em_rota' ? 0 : undefined,
+                });
+                onVeiculoClick?.(v);
+              }}
+            />
           ))}
+
           {/* Marcadores das Paradas da Rota */}
           {renderedMarkers}
 
@@ -353,13 +468,16 @@ export const RouteMap: React.FC<RouteMapProps> = ({
                 });
               }}
             >
-              <div className="flex flex-col items-center animate-bounce">
-                <span className="bg-[#C2410C] text-white text-[10px] font-extrabold px-2 py-0.5 rounded shadow-md whitespace-nowrap mb-0.5">
+              <div className="flex flex-col items-center animate-bounce select-none">
+                <span className="bg-gradient-to-r from-[#EA580C] to-[#C2410C] text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-md border border-white/80 whitespace-nowrap mb-0.5">
                   Nova Parada
                 </span>
-                <div className="w-8 h-8 rounded-full bg-[#C2410C] text-white flex items-center justify-center shadow-xl border-2 border-white">
+                <div className="w-8 h-8 rounded-2xl bg-gradient-to-br from-[#EA580C] to-[#C2410C] text-white flex items-center justify-center shadow-xl border-2 border-white">
                   <MapPin className="w-4 h-4 text-white" />
                 </div>
+                <svg width="10" height="6" viewBox="0 0 10 6" fill="none" className="-mt-0.5">
+                  <path d="M5 6L0.5 0H9.5L5 6Z" fill="#C2410C" stroke="#FFFFFF" strokeWidth="1" />
+                </svg>
               </div>
             </Marker>
           )}
@@ -394,6 +512,11 @@ export const RouteMap: React.FC<RouteMapProps> = ({
         <span className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-[#1D4ED8]"></span>
           <span className="font-medium">{paradas.length} paradas na rota</span>
+          {veiculosComBearing.length > 0 && (
+            <span className="font-semibold text-emerald-700 ml-2">
+              · {veiculosComBearing.length} {veiculosComBearing.length === 1 ? 'veículo monitorado' : 'veículos monitorados'}
+            </span>
+          )}
         </span>
         <span className="font-semibold text-emerald-700">{showStartPoint ? 'Sequência planejada' : 'Rotas despachadas'}</span>
       </div>

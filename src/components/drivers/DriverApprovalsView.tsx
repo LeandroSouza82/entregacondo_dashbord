@@ -344,7 +344,7 @@ export const DriverApprovalsView: React.FC = () => {
 
       {/* Cartões de Indicadores (KPIs) */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex items-center justify-between">
+        <div className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex items-center justify-between">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-amber-600">Aguardando Análise</span>
             <div className="text-3xl font-extrabold text-[#0F1B2D] mt-1">{totalPendentes}</div>
@@ -355,7 +355,7 @@ export const DriverApprovalsView: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex items-center justify-between">
+        <div className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex items-center justify-between">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">Motoristas Aprovados</span>
             <div className="text-3xl font-extrabold text-[#0F1B2D] mt-1">{totalAprovados}</div>
@@ -366,7 +366,7 @@ export const DriverApprovalsView: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white border border-[#E1E6ED] rounded-2xl p-5 shadow-card flex items-center justify-between">
+        <div className="bg-white border border-gray-300 rounded-2xl p-5 shadow-card flex items-center justify-between">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Suspensos / Rejeitados</span>
             <div className="text-3xl font-extrabold text-[#0F1B2D] mt-1">{totalSuspensos}</div>
