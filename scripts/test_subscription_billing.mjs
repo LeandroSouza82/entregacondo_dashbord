@@ -6,12 +6,12 @@ let requests=[],records=[],links=[],amount=149.90,status='approved',refund=0,col
 const config={accessToken:'TEST-server-only',webhookSecret:'private-webhook-test',publicUrl:'https://entregacondo.com.br',live:false,
  reserve:async(jwt,id)=>{assert.equal(jwt,'valid-jwt');assert.equal(id,company);if(!available)throw Error('not authorized');return {id:checkout,email:'payer@example.test',valor:149.90,ambiente:'test'};},
  link:async(...args)=>{links.push(args);return true;},context:async id=>id==='123'?{checkout_id:checkout,preapproval_id:'sub-1'}:null,
- record:async args=>{records.push(args);if(failRecord)throw Error('DB unavailable');return true;},
+ sync:async()=>true,record:async args=>{records.push(args);if(failRecord)throw Error('DB unavailable');return true;},
  fetch:async(url,init)=>{requests.push({url,init});assert.equal(init.headers.Authorization,'Bearer TEST-server-only');let data;
  if(url.endsWith('/users/me'))data={id:77};
  else if(url.endsWith('/preapproval')&&init.method==='POST'){data={id:'sub-1',init_point:'https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=sub-1'};}
  else if(url.endsWith('/authorized_payments/555'))data={id:555,preapproval_id:'sub-1',external_reference:checkout,currency_id:'BRL',transaction_amount:149.90,payment:{id:123}};
- else if(url.endsWith('/preapproval/sub-1'))data={id:'sub-1',external_reference:checkout,collector_id:collector,auto_recurring:{transaction_amount:149.90,currency_id:'BRL',frequency:1,frequency_type:'months'}};
+ else if(url.endsWith('/preapproval/sub-1'))data={id:'sub-1',external_reference:checkout,collector_id:collector,auto_recurring:{transaction_amount:149.90,currency_id:'BRL',frequency:1,frequency_type:'months'},status:'pending',last_modified:'2026-10-23T12:00:00Z'};
  else if(url.endsWith('/v1/payments/123'))data={id:123,collector_id:collector,live_mode:live,status,transaction_amount:amount,currency_id:'BRL',transaction_amount_refunded:refund,date_approved:'2026-10-23T12:00:00Z',date_last_updated:'2026-10-23T12:00:01Z'};
  else throw Error('Unexpected API URL');return new Response(JSON.stringify(data));}};
 const request=(body,options={})=>new Request('https://server.test/checkout',{method:'POST',headers:{authorization:'Bearer valid-jwt',origin:'https://entregacondo.com.br','content-type':'application/json',...options.headers},body:JSON.stringify(body)});

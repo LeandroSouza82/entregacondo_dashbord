@@ -12,6 +12,7 @@ import {
   EyeOff
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { AuthEmailActions } from './AuthEmailActions';
 import { requireCompanyId } from '../lib/company';
 
 type AuthMode = 'login' | 'cadastro';
@@ -22,7 +23,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
   const [ready, setReady] = useState(false);
   const [allowed, setAllowed] = useState(false);
   const [error, setError] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState(() => window.location.hash.includes('ativado=1') ? 'Acesso ativado! Entre com seu e-mail e senha para começar.' : window.location.hash.includes('senha=definida') ? 'Senha definida! Entre com seu e-mail e a nova senha.' : '');
   const [busy, setBusy] = useState(false);
   const [demoAtivo, setDemoAtivo] = useState<boolean>(() => {
     if (typeof window === 'undefined' || !import.meta.env.DEV) return false;
@@ -170,7 +171,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         email: email.trim(),
         password,
         options: {
-          emailRedirectTo: window.location.origin + '/',
+          emailRedirectTo: window.location.origin + '/?auth_action=signup',
           data: {
             name: nomeCompleto.trim(),
             full_name: nomeCompleto.trim(),
@@ -186,6 +187,10 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         throw signUpError;
       }
 
+      if (Array.isArray(signUpData.user?.identities) && signUpData.user.identities.length === 0) {
+        setModo('login'); setPassword('');
+        throw new Error('Este e-mail já possui cadastro. Entre com sua senha ou com Google. Se ainda não tem senha, use “Esqueci ou quero definir minha senha”. Uma nova tentativa de cadastro não altera sua senha.');
+      }
       let activeUser = signUpData.user;
       let activeSession = signUpData.session;
 
@@ -207,7 +212,8 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         setSession(activeSession);
         setCurrentUser(activeUser);
       } else {
-        setSuccessMessage('Cadastro recebido! Confirme seu e-mail e entre para iniciar seus 30 dias grátis.');
+        setPassword('');
+        setSuccessMessage('Cadastro recebido! Confirme seu e-mail e entre para criar sua empresa e iniciar seus 30 dias grátis. Você poderá contratar o plano pelo painel, sem perder os dias de teste.');
         setModo('login');
       }
     } catch (e) {
@@ -417,8 +423,10 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
               </form>
             )}
 
+            {modo === 'login' && <AuthEmailActions email={email} />}
+
             {/* FORMULÁRIO DE CADASTRO DE GESTOR */}
-            {modo === 'cadastro' && <p className="text-xs leading-relaxed text-slate-600">30 dias grátis, sem cartão. Depois, R$ 149,90/mês por empresa, com até 3 motoristas ativos e 1.000 atendimentos por mês. Seus dados ficam preservados se não assinar.</p>}
+            {modo === 'cadastro' && <p className="text-xs leading-relaxed text-slate-600">30 dias grátis, sem cartão. Depois, R$ 149,90/mês por empresa, com até 3 motoristas ativos e 1.000 atendimentos por mês. Você pode assinar durante o teste e manter os dias grátis: a primeira mensalidade fica prevista para o fim do período. Confirme seu e-mail para começar. Sem contratação, não há cobrança automática; após vencer, seus dados ficam disponíveis para consulta e as operações dependem de pagamento confirmado.</p>}
             {modo === 'cadastro' && (
               <form onSubmit={registrarGestor} className="space-y-4">
                 <div>

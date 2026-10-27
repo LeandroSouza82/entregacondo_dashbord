@@ -2,7 +2,7 @@ BEGIN;
 CREATE TEMP TABLE trial_results(name text);
 CREATE FUNCTION pg_temp.trial_check(ok boolean,label text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN IF ok IS NOT TRUE THEN RAISE EXCEPTION 'TRIAL: %',label; END IF; INSERT INTO trial_results VALUES(label); END $$;
-GRANT INSERT ON trial_results TO authenticated;
+GRANT INSERT ON trial_results TO authenticated,service_role;
 INSERT INTO auth.users(id,email,email_confirmed_at,raw_user_meta_data) VALUES
 ('ab000000-0000-0000-0000-000000000001','trial-a@example.test',now(),'{"full_name":"Trial A","empresa_nome":"Essenza Teste","papel":"admin","empresa_id":"22222222-2222-2222-2222-222222222222","teste_fim":"2099-01-01"}'),
 ('ab000000-0000-0000-0000-000000000002','trial-b@example.test',now(),'{"empresa_nome":"Outra Empresa"}'),
@@ -49,6 +49,42 @@ SET LOCAL ROLE authenticated;
 SELECT pg_temp.trial_check(public.obter_minha_assinatura(current_setting('trial.a')::uuid)->>'estado'='teste','new company starts in trial');
 SELECT set_config('trial.address',(public.salvar_cliente_endereco(jsonb_build_object('empresa_id',current_setting('trial.a'),'nome','Cliente','endereco','Rua Teste 1','latitude',-27.5,'longitude',-48.5))->>'id'),true);
 RESET ROLE;
+
+-- Early subscription keeps the original trial date and does not grant paid access.
+SELECT set_config('request.jwt.claim.role','authenticated',true);
+SELECT set_config('request.jwt.claim.sub','ab000000-0000-0000-0000-000000000002',true);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.trial_check(public.consultar_checkout_assinatura(current_setting('trial.b')::uuid) IS NULL,'status lookup creates no checkout');
+SELECT set_config('early.checkout',(public.preparar_checkout_assinatura(current_setting('trial.b')::uuid)->>'id'),true);
+SELECT pg_temp.trial_check(public.preparar_checkout_assinatura(current_setting('trial.b')::uuid)->>'id'=current_setting('early.checkout'),'early retries reuse same checkout');
+RESET ROLE;
+SELECT pg_temp.trial_check((SELECT c.inicio_cobranca=a.teste_fim FROM ec_private.checkouts_assinatura c JOIN ec_private.assinaturas_empresas a USING(empresa_id) WHERE c.id=current_setting('early.checkout')::uuid),'first charge preserves exact trial end');
+SELECT pg_temp.trial_check(NOT has_function_privilege('authenticated','public.sincronizar_assinatura_provedor(uuid,text,text,timestamptz,timestamptz,timestamptz,text)','EXECUTE'),'browser cannot confirm recurring contract');
+SELECT set_config('early.end',(SELECT teste_fim::text FROM ec_private.assinaturas_empresas WHERE empresa_id=current_setting('trial.b')::uuid),true);
+SELECT set_config('request.jwt.claim.role','service_role',true);
+SET LOCAL ROLE service_role;
+SELECT public.vincular_checkout_assinatura(current_setting('early.checkout')::uuid,'early-sub','https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=early-sub');
+SELECT public.sincronizar_assinatura_provedor(current_setting('early.checkout')::uuid,'early-sub','authorized',now(),current_setting('early.end')::timestamptz,NULL,'production');
+RESET ROLE;
+SELECT pg_temp.trial_check((SELECT pago_ate IS NULL FROM ec_private.assinaturas_empresas WHERE empresa_id=current_setting('trial.b')::uuid),'authorization alone grants no paid coverage');
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.trial_check(public.obter_minha_assinatura(current_setting('trial.b')::uuid)->>'checkout_estado'='authorized','manager sees confirmed contract during trial');
+RESET ROLE;
+SET LOCAL ROLE service_role;
+DO $$ BEGIN
+ BEGIN PERFORM public.sincronizar_assinatura_provedor(current_setting('early.checkout')::uuid,'early-sub','authorized',now()+interval '1 second',now(),NULL,'production'); RAISE EXCEPTION 'Unexpected early charge';
+ EXCEPTION WHEN invalid_parameter_value THEN PERFORM pg_temp.trial_check(true,'provider cannot shorten trial'); END;
+END $$;
+SELECT public.sincronizar_assinatura_provedor(current_setting('early.checkout')::uuid,'early-sub','cancelled',now()+interval '2 seconds',current_setting('early.end')::timestamptz,NULL,'production');
+SELECT public.sincronizar_assinatura_provedor(current_setting('early.checkout')::uuid,'early-sub','authorized',now()+interval '1 second',current_setting('early.end')::timestamptz,NULL,'production');
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.trial_check(public.obter_minha_assinatura(current_setting('trial.b')::uuid)->>'checkout_estado'='cancelled','old webhook cannot restore cancelled contract');
+SELECT pg_temp.trial_check(public.preparar_checkout_assinatura(current_setting('trial.b')::uuid)->>'id'<>current_setting('early.checkout'),'cancelled contract can be replaced without deleting payment history');
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub','ab000000-0000-0000-0000-000000000001',true);
+SELECT set_config('request.jwt.claim.role','authenticated',true);
+
 -- Privileged fixtures retain JWT context to exercise triggers beneath definer RPCs.
 INSERT INTO public.motoristas(empresa_id,nome,telefone,veiculo_modelo,veiculo_placa)
 SELECT current_setting('trial.a')::uuid,'Driver '||g,'000000000','Teste','TRIAL'||g FROM generate_series(1,3) g;

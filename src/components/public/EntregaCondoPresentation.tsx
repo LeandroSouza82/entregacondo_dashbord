@@ -28,7 +28,8 @@ export default function EntregaCondoPresentation() {
           <a href="/#/cadastro" className="mt-8 inline-flex min-h-12 items-center gap-3 rounded-xl bg-orange-700 px-5 py-3 font-bold text-white hover:bg-orange-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-700">
             Experimente grátis por 30 dias <ArrowRight size={18} aria-hidden="true" />
           </a>
-          <p className="mt-4 text-sm text-slate-600">Sem cartão. Depois, R$ 149,90/mês por empresa · até 3 motoristas ativos e 1.000 atendimentos por mês.</p>
+          <p className="mt-4 text-sm text-slate-600">Teste de 30 dias sem cartão. Você pode assinar durante o teste, mantendo os dias grátis, com a primeira mensalidade prevista para o fim do período. Depois, R$ 149,90/mês por empresa · até 3 motoristas ativos e 1.000 atendimentos por mês.</p>
+          <p className="mt-3 max-w-2xl text-sm text-slate-600">O teste começa no primeiro acesso com e-mail confirmado. Sem contratação, não há cobrança automática. Após o vencimento, os dados continuam disponíveis para consulta e as operações exigem pagamento confirmado.</p>
         </section>
         <section className="grid gap-4 sm:grid-cols-3" aria-label="O que o EntregaCondo oferece">
           {features.map(({ icon: Icon, title, description }) => (

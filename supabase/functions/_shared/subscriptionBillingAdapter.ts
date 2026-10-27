@@ -9,6 +9,21 @@ export const billing = {
   publicUrl: 'https://entregacondo.com.br',
   live: environment === 'production',
   fetch,
+  reportProviderFailure: (diagnostic: { status: number; reason: string }) => {
+    console.error(JSON.stringify({ event: 'mercado_pago_request_rejected', ...diagnostic }));
+  },
+  lookup: async (jwt: string, company: string) => {
+    const publicKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const userClient = createClient(url, publicKey, { global: { headers: { Authorization: 'Bearer ' + jwt } }, auth: { persistSession: false, autoRefreshToken: false } });
+    const { data: user, error: authError } = await userClient.auth.getUser(jwt);
+    if (authError || !user.user || !user.user.email_confirmed_at) throw new Error('Invalid session');
+    const { data, error } = await userClient.rpc('consultar_checkout_assinatura', { p_empresa_id: company });
+    if (error) throw error; return data;
+  },
+  sync: async (params: Record<string, unknown>) => {
+    const { data, error } = await client.rpc('sincronizar_assinatura_provedor', { ...params, p_ambiente: environment });
+    if (error) throw error; return data === true;
+  },
   reserve: async (jwt: string, company: string) => {
     const publicKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const userClient = createClient(url, publicKey, { global: { headers: { Authorization: 'Bearer ' + jwt } }, auth: { persistSession: false, autoRefreshToken: false } });
