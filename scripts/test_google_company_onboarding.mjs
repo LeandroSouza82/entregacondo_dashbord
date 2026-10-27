@@ -7,6 +7,7 @@ import ts from 'typescript';
 // Exercise the real AuthGate/company client with an OAuth session, without creating production users.
 const id = '\0virtual:google-company';
 const old = process.argv.includes('--before');
+const beforeRef = '04af9ad55c104b4316704c49337404e8b6a1cde7';
 const harness = `import '/src/index.css';import React from 'react';import {createRoot} from 'react-dom/client';import {AuthGate} from '/src/components/AuthGate.tsx';createRoot(document.getElementById('root')).render(<AuthGate><div id="dashboard">Painel autorizado</div></AuthGate>);`;
 const fake = `export const isSupabaseConfigured=true;window.calls=[];
 window.phase=new URLSearchParams(location.search).get('phase')||'google';window.fail=false;window.created={};
@@ -31,8 +32,8 @@ if(name==='iniciar_teste_empresa'){
 const server = await createServer({ server:{ host:'127.0.0.1',port:0 }, plugins:[{
   name:'google-company',enforce:'pre',resolveId(s){if(s==='virtual:google-company')return id;},
   load(s){const path=s.replaceAll('\\','/');if(path.endsWith('/src/lib/supabase.ts'))return fake;
-    if(old&&path.endsWith('/src/components/AuthGate.tsx'))return execFileSync('git',['show','HEAD:src/components/AuthGate.tsx'],{encoding:'utf8'});
-    if(old&&path.endsWith('/src/lib/company.ts'))return execFileSync('git',['show','HEAD:src/lib/company.ts'],{encoding:'utf8'});
+    if(old&&path.endsWith('/src/components/AuthGate.tsx'))return execFileSync('git',['show',beforeRef+':src/components/AuthGate.tsx'],{encoding:'utf8'});
+    if(old&&path.endsWith('/src/lib/company.ts'))return execFileSync('git',['show',beforeRef+':src/lib/company.ts'],{encoding:'utf8'});
     if(s===id)return ts.transpileModule(harness,{compilerOptions:{jsx:4,module:99,target:9}}).outputText;},
   configureServer(s){s.middlewares.use('/__google',async(_req,res)=>{res.setHeader('Content-Type','text/html');res.end(await s.transformIndexHtml('/__google','<html><head><meta name="viewport" content="width=device-width,initial-scale=1"/></head><body><div id="root"></div><script type="module" src="/@id/__x00__virtual:google-company"></script></body></html>'));});}
 }]});
