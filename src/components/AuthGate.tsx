@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type FormEvent } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { 
   Building2, 
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { AuthEmailActions } from './AuthEmailActions';
-import { requireCompanyId } from '../lib/company';
+import { CompanySetupRequiredError, requireCompanyId } from '../lib/company';
 
 type AuthMode = 'login' | 'cadastro';
 
@@ -21,7 +21,11 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
   const [session, setSession] = useState<Session | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
-  const [allowed, setAllowed] = useState(false);
+  const [authorizedUserId, setAuthorizedUserId] = useState<string | null>(null);
+  const [setupUserId, setSetupUserId] = useState<string | null>(null);
+  const [setupName, setSetupName] = useState('');
+  const [accessRevision, setAccessRevision] = useState(0);
+  const accessRequest = useRef(0);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState(() => window.location.hash.includes('ativado=1') ? 'Acesso ativado! Entre com seu e-mail e senha para começar.' : window.location.hash.includes('senha=definida') ? 'Senha definida! Entre com seu e-mail e a nova senha.' : '');
   const [busy, setBusy] = useState(false);
@@ -67,10 +71,12 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, value) => {
       if (active) {
+        accessRequest.current++;
+        setAuthorizedUserId(null);
         setSession(value);
         setCurrentUser(value?.user ?? null);
         if (!value) {
-          setAllowed(false);
+          localStorage.removeItem('ec_active_company_id');
         }
         setError('');
       }
@@ -84,22 +90,26 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
 
   useEffect(() => {
     let active = true;
+    const request = ++accessRequest.current;
 
     async function validarAcesso() {
+      setSetupUserId(null);
+      setSetupName('');
       if (!session) return;
       setError('');
-      setAllowed(false);
+      setAuthorizedUserId(null);
 
       try {
         await requireCompanyId();
-        if (active) {
-          setAllowed(true);
+        if (active && request === accessRequest.current) {
+          setAuthorizedUserId(session.user.id);
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
 
-        if (active) {
-          setError(msg);
+        if (active && request === accessRequest.current) {
+          if (err instanceof CompanySetupRequiredError) setSetupUserId(session.user.id);
+          else setError(msg);
         }
       }
     }
@@ -109,7 +119,31 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
     return () => {
       active = false;
     };
-  }, [session]);
+  }, [session, accessRevision]);
+
+  async function criarEmpresa(event: FormEvent) {
+    event.preventDefault();
+    if (!session || setupUserId !== session.user.id || busy) return;
+    const request = accessRequest.current;
+    setBusy(true);
+    setError('');
+    try {
+      const name = setupName.trim();
+      if (name.length < 2 || name.length > 120) throw new Error('Informe o nome da empresa entre 2 e 120 caracteres.');
+      const { data, error: setupError } = await supabase.rpc('iniciar_teste_empresa', { p_nome_empresa: name });
+      if (setupError) throw new Error(setupError.message || 'Não foi possível criar sua empresa. Tente novamente.');
+      if (!(data as { sucesso?: boolean })?.sucesso) throw new Error('Não foi possível criar sua empresa. Tente novamente.');
+      await requireCompanyId();
+      if (request === accessRequest.current) {
+        setSetupUserId(null);
+        setAuthorizedUserId(session.user.id);
+      }
+    } catch (err) {
+      if (request === accessRequest.current) setError(err instanceof Error ? err.message : 'Não foi possível criar sua empresa. Tente novamente.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function login(event: FormEvent) {
     event.preventDefault();
@@ -223,7 +257,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
     }
   }
 
-  if ((session && allowed) || demoAtivo) {
+  if ((session && authorizedUserId === session.user.id) || demoAtivo) {
     const userEmail = currentUser?.email || session?.user.email || 'gestor.demo@entregacondo.com.br';
     return (
       <>
@@ -241,7 +275,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
               }
               setDemoAtivo(false);
               setSession(null);
-              setAllowed(false);
+              setAuthorizedUserId(null);
               void supabase.auth.signOut();
             }}
           >
@@ -293,21 +327,35 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
           </div>
         ) : session ? (
           <div className="space-y-4">
-            <p className="text-slate-600 text-sm text-center">{error || 'Conferindo acesso à empresa…'}</p>
+            {setupUserId === session.user.id ? (
+              <form onSubmit={criarEmpresa} className="space-y-4" aria-label="Concluir cadastro da empresa">
+                <div className="text-sm text-slate-600 space-y-2">
+                  <h2 className="font-bold text-slate-900">Falta apenas cadastrar sua empresa</h2>
+                  <p className="break-all">Você entrou com {session.user.email}.</p>
+                  <p>Informe o nome da empresa para começar seus 30 dias grátis, sem cartão. Depois, você poderá assinar pelo painel sem perder os dias de teste.</p>
+                </div>
+                <label htmlFor="setup-company-name" className="block text-sm font-medium text-slate-800">Nome da empresa</label>
+                <input id="setup-company-name" value={setupName} onChange={event => setSetupName(event.target.value)} required minLength={2} maxLength={120} autoComplete="organization" disabled={busy} className="w-full border border-slate-300 rounded-lg p-3 text-sm" />
+                {error && <p role="alert" className="text-red-700 text-sm">{error}</p>}
+                <button type="submit" disabled={busy} className="w-full bg-orange-600 hover:bg-orange-700 text-white rounded-lg p-3 text-sm font-semibold disabled:opacity-50">{busy ? 'Preparando sua empresa…' : 'Criar empresa e iniciar teste grátis'}</button>
+              </form>
+            ) : <p role={error ? 'alert' : 'status'} className="text-slate-600 text-sm text-center">{error || 'Conferindo acesso à empresa…'}</p>}
             <div className="flex gap-3">
-              <button
-                type="button"
-                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg p-2.5 text-sm font-medium transition-colors cursor-pointer"
-                onClick={() => window.location.reload()}
-              >
-                Atualizar acesso
-              </button>
+              {setupUserId !== session.user.id && (
+                <button
+                  type="button"
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg p-2.5 text-sm font-medium transition-colors cursor-pointer"
+                  onClick={() => setAccessRevision(value => value + 1)}
+                >
+                  Atualizar acesso
+                </button>
+              )}
               <button
                 type="button"
                 className="flex-1 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg p-2.5 text-sm font-medium transition-colors cursor-pointer"
                 onClick={() => void supabase.auth.signOut()}
               >
-                Sair
+                Sair e usar outra conta
               </button>
             </div>
           </div>
