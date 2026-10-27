@@ -298,6 +298,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
     >
       <div className="w-full max-w-[420px] bg-white rounded-3xl p-8 sm:p-9 shadow-2xl border border-slate-100/90 space-y-6">
         
+        <a href="https://entregacondo.com.br/" className="inline-block text-xs text-slate-500 hover:text-orange-700">← Conhecer o EntregaCondo</a>
         {/* CABEÇALHO */}
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#0F1B2D] p-2 shadow-lg mb-1 border border-slate-800">
@@ -576,6 +577,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
 
           </>
         )}
+        <p className="text-center text-xs text-slate-500"><a href="https://entregacondo.com.br/privacidade" className="underline underline-offset-2">Privacidade</a><span aria-hidden="true"> · </span><a href="https://entregacondo.com.br/termos" className="underline underline-offset-2">Termos de uso</a></p>
       </div>
     </main>
   );

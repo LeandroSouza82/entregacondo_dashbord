@@ -25,6 +25,14 @@ const beforeWrongEnvironment=requests.length;
 assert.equal((await wrongEnvironment(request({empresa_id:company}))).status,503);
 assert.equal(requests.length,beforeWrongEnvironment,'test credentials never create checkout for a real company');
 const created=JSON.parse(requests[0].init.body);assert.equal(created.auto_recurring.transaction_amount,149.90);assert.equal(created.auto_recurring.frequency_type,'months');assert.equal(created.status,'pending');assert.equal(created.external_reference,checkout);assert.equal(created.back_url,'https://entregacondo.com.br/#/assinatura');assert.equal(requests[0].init.headers['X-Idempotency-Key'],checkout);assert.equal(links.length,1);assert.equal(records.length,0);
+const migratedHandler=createCheckoutHandler({...config,publicUrl:'https://dashboard.entregacondo.com.br',allowedOrigins:['https://entregacondo.com.br']});
+for(const origin of ['https://entregacondo.com.br','https://dashboard.entregacondo.com.br']){
+ const preflight=await migratedHandler(new Request('https://server.test/checkout',{method:'OPTIONS',headers:{origin}}));
+ assert.equal(preflight.status,200);assert.equal(preflight.headers.get('Access-Control-Allow-Origin'),origin);
+ assert.equal((await migratedHandler(request({empresa_id:company},{headers:{origin}}))).status,200);
+ assert.equal(JSON.parse(requests.at(-1).init.body).back_url,'https://dashboard.entregacondo.com.br/#/assinatura');
+}
+assert.equal((await migratedHandler(request({empresa_id:company},{headers:{origin:'https://dashboard.entregacondo.com.br.attacker.test'}}))).status,403);
 available=false;assert.equal((await checkoutHandler(request({empresa_id:company}))).status,400);available=true;
 assert.equal((await createCheckoutHandler({...config,accessToken:''})(request({empresa_id:company}))).status,503);
 function notification(type,id,bad=false){const ts='1704908010',reqId='request-test';const signature=createHmac('sha256',config.webhookSecret).update(`id:${id};request-id:${reqId};ts:${ts};`).digest('hex');return new Request(`https://server.test/webhook?data.id=${id}&type=${type}`,{method:'POST',headers:{'x-signature':`ts=${ts},v1=${bad?'0'.repeat(64):signature}`,'x-request-id':reqId,'content-type':'application/json'},body:JSON.stringify({type,data:{id}})});}

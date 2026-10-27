@@ -6,7 +6,8 @@ const environment = Deno.env.get('MP_ENVIRONMENT');
 export const billing = {
   accessToken: ['production', 'test'].includes(environment || '') ? Deno.env.get('MERCADOPAGO_ACCESS_TOKEN') || '' : '',
   webhookSecret: Deno.env.get('MERCADOPAGO_WEBHOOK_SECRET') || '',
-  publicUrl: 'https://entregacondo.com.br',
+  publicUrl: 'https://dashboard.entregacondo.com.br',
+  allowedOrigins: ['https://entregacondo.com.br'],
   live: environment === 'production',
   fetch,
   reportProviderFailure: (diagnostic: { status: number; reason: string }) => {

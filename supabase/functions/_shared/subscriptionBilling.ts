@@ -5,7 +5,7 @@ type BillingDiagnostic = {
   reason: 'test_account_mismatch' | 'invalid_credentials' | 'invalid_return_url' | 'invalid_payer' | 'provider_rejected' | 'provider_unavailable' | 'network_unavailable';
 };
 type Dependencies = {
-  accessToken: string; webhookSecret: string; publicUrl: string; live: boolean;
+  accessToken: string; webhookSecret: string; publicUrl: string; allowedOrigins?: string[]; live: boolean;
   reserve: (jwt: string, company: string) => Promise<Checkout>;
   link: (id: string, preapproval: string, url: string) => Promise<boolean>;
   context: (payment: string) => Promise<PaymentContext | null>;
@@ -90,9 +90,11 @@ async function syncSubscription(deps: Dependencies, id: string, expectedCheckout
 }
 
 export function createCheckoutHandler(deps: Dependencies) {
-  const origin = new URL(deps.publicUrl).origin;
+  const returnOrigin = new URL(deps.publicUrl).origin;
   return async (req: Request) => {
-    if (req.headers.get('origin') && req.headers.get('origin') !== origin) return reply(403, { error: 'Origem não permitida.' });
+    const requestOrigin = req.headers.get('origin');
+    if (requestOrigin && ![returnOrigin, ...(deps.allowedOrigins || [])].includes(requestOrigin)) return reply(403, { error: 'Origem não permitida.' });
+    const origin = requestOrigin || returnOrigin;
     if (req.method === 'OPTIONS') return reply(200, {}, origin);
     if (req.method !== 'POST') return reply(405, { error: 'Método não permitido.' }, origin);
     const jwt = req.headers.get('authorization')?.match(/^Bearer (\S+)$/i)?.[1];
@@ -129,7 +131,7 @@ export function createCheckoutHandler(deps: Dependencies) {
         headers: { 'X-Idempotency-Key': checkout.id }, body: JSON.stringify({
           reason: 'EntregaCondo · Plano mensal', external_reference: checkout.id, payer_email: checkout.email,
           auto_recurring: { frequency: 1, frequency_type: 'months', transaction_amount: 149.90, currency_id: 'BRL', ...(scheduledStart ? { start_date: scheduledStart } : {}) },
-          back_url: origin + '/#/assinatura', status: 'pending',
+          back_url: returnOrigin + '/#/assinatura', status: 'pending',
         }),
       });
       if (typeof subscription.id !== 'string' || !resourceId.test(subscription.id)) throw new Error('Invalid subscription');

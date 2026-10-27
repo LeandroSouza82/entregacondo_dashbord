@@ -5,8 +5,15 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/",
+      "has": [{ "type": "host", "value": "entregacondo.com.br" }],
+      "destination": "/site/index.html"
+    },
+    { "source": "/privacidade", "destination": "/site/privacidade.html" },
+    { "source": "/termos", "destination": "/site/termos.html" },
+    {
       "source": "/(.*)",
-      "destination": "/index.html"
+      "destination": "/dashboard.html"
     }
   ],
   "headers": [
@@ -20,12 +27,23 @@
         {
           "key": "Referrer-Policy",
           "value": "no-referrer"
-        },
-        {
-          "key": "X-Robots-Tag",
-          "value": "noindex, nofollow"
         }
       ]
+    },
+    {
+      "source": "/(.*)",
+      "missing": [{ "type": "host", "value": "entregacondo.com.br" }],
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    },
+    {
+      "source": "/comprovante/(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
+  ],
+  "redirects": [
+    { "source": "/privacidade.html", "destination": "https://entregacondo.com.br/privacidade", "permanent": true },
+    { "source": "/termos.html", "destination": "https://entregacondo.com.br/termos", "permanent": true },
+    { "source": "/login", "destination": "https://dashboard.entregacondo.com.br/#/login", "permanent": false },
+    { "source": "/cadastro", "destination": "https://dashboard.entregacondo.com.br/#/cadastro", "permanent": false }
   ]
 }
