@@ -30,7 +30,7 @@ export function AuthEmailActions({ email }: { email: string }) {
   async function google() {
     setBusy(true); setError('');
     try {
-      const { error: err } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + '/' } });
+      const { error: err } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + '/', queryParams: { prompt: 'select_account' } } });
       if (err) throw err;
     } catch { setError('Não foi possível abrir o Google. Tente novamente em instantes.'); }
     finally { setBusy(false); }

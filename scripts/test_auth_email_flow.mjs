@@ -30,6 +30,11 @@ try{
  assert.match(await page.evaluate(()=>window.calls.find(c=>c.name==='recovery').args[1].redirectTo),/\?auth_action=recovery$/);
  assert.equal(await page.$$eval('button',buttons=>buttons.find(b=>b.textContent.includes('Reenviar confirmação')).disabled),true,'email resend cooldown');
  await page.goto(base+'/#/login');await page.waitForSelector('input[type=email]');await page.evaluate(()=>{window.calls=[];});
+ await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Continuar com Google')).click());
+ await page.waitForFunction(()=>window.calls.some(c=>c.name==='google'));
+ assert.equal(await page.evaluate(()=>window.calls.find(c=>c.name==='google').args.options.queryParams.prompt),'select_account','Google always offers a choice when switching accounts');
+ assert.equal(await page.evaluate(()=>window.calls.find(c=>c.name==='google').args.options.redirectTo),base+'/');
+ await page.evaluate(()=>{window.calls=[];});
  await page.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Reenviar confirmação')).click());
  await page.waitForFunction(()=>document.body.innerText.includes('Preencha seu e-mail'));
  assert.equal(await page.evaluate(()=>window.calls.length),0,'missing email never sends');
