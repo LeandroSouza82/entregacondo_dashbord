@@ -2,6 +2,13 @@ import { supabase } from './supabase';
 
 const DEMO_COMPANY_ID = '11111111-1111-1111-1111-111111111111';
 
+export class CompanySetupRequiredError extends Error {
+  constructor() {
+    super('Informe o nome da empresa para iniciar seus 30 dias grátis.');
+    this.name = 'CompanySetupRequiredError';
+  }
+}
+
 export function isDemoModeActive(): boolean {
   if (typeof window === 'undefined') return false;
   try {
@@ -41,6 +48,11 @@ export async function requireCompanyId(): Promise<string> {
       return access.empresa_id;
     }
     if (attempt === 0 && access?.status === 'sem_vinculo') {
+      localStorage.removeItem('ec_active_company_id');
+      const name = sessionData.session.user.user_metadata?.empresa_nome;
+      if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 120) {
+        throw new CompanySetupRequiredError();
+      }
       const result = await supabase.rpc('iniciar_teste_empresa', {});
       if (result.error) throw new Error(result.error.message || 'Não foi possível iniciar o teste.');
       if (!(result.data as {sucesso?: boolean})?.sucesso) throw new Error('Não foi possível preparar sua empresa.');
