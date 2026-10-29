@@ -512,6 +512,7 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
+      registrar_teste_empresa: {Args: {p_cadastro: Json}; Returns: Json}
       iniciar_teste_empresa: {Args: {p_nome_empresa?: string | null}; Returns: Json}
       obter_minha_assinatura: {Args: {p_empresa_id: string}; Returns: Json}
       criar_compartilhamento_comprovante: {Args: {p_entrega_id:string;p_token:string;p_foto_url?:string|null;p_assinatura_url?:string|null}; Returns:Json}

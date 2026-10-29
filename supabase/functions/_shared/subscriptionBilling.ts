@@ -1,12 +1,24 @@
-type Checkout = { id: string; email: string; url?: string; preapproval_id?: string; valor: number; ambiente: 'test' | 'production' };
+type Checkout = { id: string; email: string; url?: string; preapproval_id?: string; valor: number; ambiente: 'test' | 'production'; inicio_cobranca?: string | null; servidor_em?: string; estado_provedor?: string };
 type PaymentContext = { checkout_id: string; preapproval_id: string };
+type BillingDiagnostic = {
+  status: number;
+  reason: 'test_account_mismatch' | 'invalid_credentials' | 'invalid_return_url' | 'invalid_payer' | 'provider_rejected' | 'provider_unavailable' | 'network_unavailable';
+};
+type CheckoutDiagnostic = {
+  stage: 'request' | 'lookup' | 'reconcile' | 'reserve' | 'plan' | 'provider' | 'schedule' | 'url' | 'link';
+  providerStartDeltaMs?: number | null;
+};
 type Dependencies = {
-  accessToken: string; webhookSecret: string; publicUrl: string; live: boolean;
+  accessToken: string; webhookSecret: string; publicUrl: string; allowedOrigins?: string[]; live: boolean;
   reserve: (jwt: string, company: string) => Promise<Checkout>;
   link: (id: string, preapproval: string, url: string) => Promise<boolean>;
   context: (payment: string) => Promise<PaymentContext | null>;
   record: (params: Record<string, unknown>) => Promise<boolean>;
+  lookup?: (jwt: string, company: string) => Promise<{id: string; preapproval_id?: string; ambiente: string} | null>;
+  sync?: (params: Record<string, unknown>) => Promise<boolean>;
   fetch: typeof fetch;
+  reportProviderFailure?: (diagnostic: BillingDiagnostic) => void;
+  reportCheckoutFailure?: (diagnostic: CheckoutDiagnostic) => void;
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const resourceId = /^[a-zA-Z0-9_-]{1,100}$/;
@@ -21,52 +33,146 @@ function checkoutUrl(value: unknown) {
   if (url.protocol !== 'https:' || !['www.mercadopago.com.br', 'mercadopago.com.br'].includes(url.hostname)) throw new Error('Invalid checkout URL');
   return url.href;
 }
-async function jsonBody(req: Request) {
+async function jsonBody(req: Request | Response) {
   const reader = req.body?.getReader(); let bytes = 0; const chunks: Uint8Array[] = [];
   if (!reader) throw new Error('Empty body');
   while (true) { const { value, done } = await reader.read(); if (done) break; bytes += value.length; if (bytes > 32768) { await reader.cancel(); throw new Error('Body too large'); } chunks.push(value); }
   const body = new Uint8Array(bytes); let offset = 0; for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.length; }
   return JSON.parse(new TextDecoder().decode(body));
 }
+function reportProviderFailure(deps: Dependencies, diagnostic: BillingDiagnostic) {
+  // Only fixed categories and HTTP status may leave this helper. Never log
+  // provider bodies, request payloads, emails, session JWTs or server secrets.
+  try { deps.reportProviderFailure?.(diagnostic); } catch { /* Diagnostics cannot affect billing. */ }
+}
+function providerFailure(status: number, message: unknown): BillingDiagnostic {
+  const text = typeof message === 'string' ? message.toLowerCase() : '';
+  const reason = status === 401 || status === 403 ? 'invalid_credentials'
+    : text.includes('both payer and collector') && text.includes('test') ? 'test_account_mismatch'
+    : text.includes('back_url') ? 'invalid_return_url'
+    : text.includes('payer_email') ? 'invalid_payer'
+    : status >= 500 ? 'provider_unavailable' : 'provider_rejected';
+  return { status, reason };
+}
 async function mp(deps: Dependencies, path: string, init?: RequestInit) {
   if (!deps.accessToken) throw new Error('Billing not configured');
-  const response = await deps.fetch('https://api.mercadopago.com' + path, { ...init,
-    headers: { Authorization: 'Bearer ' + deps.accessToken, 'Content-Type': 'application/json', ...init?.headers },
-    signal: AbortSignal.timeout(6000), redirect: 'error',
-  });
-  if (!response.ok) throw new Error('Payment provider unavailable');
+  let response: Response;
+  try {
+    response = await deps.fetch('https://api.mercadopago.com' + path, { ...init,
+      headers: { Authorization: 'Bearer ' + deps.accessToken, 'Content-Type': 'application/json', ...init?.headers },
+      signal: AbortSignal.timeout(6000), redirect: 'error',
+    });
+  } catch {
+    reportProviderFailure(deps, { status: 0, reason: 'network_unavailable' });
+    throw new Error('Payment provider unavailable');
+  }
+  if (!response.ok) {
+    let message: unknown;
+    try { message = (await jsonBody(response))?.message; } catch { /* Malformed or oversized response. */ }
+    reportProviderFailure(deps, providerFailure(response.status, message));
+    throw new Error('Payment provider unavailable');
+  }
   return await response.json();
 }
 
+async function syncSubscription(deps: Dependencies, id: string, expectedCheckout?: string) {
+  if (!resourceId.test(id) || !deps.sync) throw new Error('Subscription reconciliation unavailable');
+  const subscription = await mp(deps, '/preapproval/' + id);
+  const merchant = await mp(deps, '/users/me');
+  if (subscription.id !== id || !uuid.test(subscription.external_reference)
+    || (expectedCheckout && subscription.external_reference !== expectedCheckout)
+    || !/^\d+$/.test(String(merchant.id)) || String(subscription.collector_id) !== String(merchant.id)
+    || Number(subscription.auto_recurring?.transaction_amount) !== 149.90
+    || subscription.auto_recurring?.currency_id !== 'BRL' || subscription.auto_recurring?.frequency !== 1
+    || subscription.auto_recurring?.frequency_type !== 'months'
+    || !['pending', 'authorized', 'paused', 'cancelled'].includes(subscription.status)
+    || !Number.isFinite(Date.parse(subscription.last_modified))) throw new Error('Invalid subscription');
+  if (!await deps.sync({p_checkout_id: subscription.external_reference, p_preapproval_id: id,
+    p_status: subscription.status, p_atualizado_em: subscription.last_modified,
+    p_inicio_cobranca: subscription.auto_recurring?.start_date || null,
+    p_proxima_cobranca: subscription.next_payment_date || null})) throw new Error('Subscription not recorded');
+  return subscription.status;
+}
+
 export function createCheckoutHandler(deps: Dependencies) {
-  const origin = new URL(deps.publicUrl).origin;
+  const returnOrigin = new URL(deps.publicUrl).origin;
   return async (req: Request) => {
-    if (req.headers.get('origin') && req.headers.get('origin') !== origin) return reply(403, { error: 'Origem não permitida.' });
+    const requestOrigin = req.headers.get('origin');
+    if (requestOrigin && ![returnOrigin, ...(deps.allowedOrigins || [])].includes(requestOrigin)) return reply(403, { error: 'Origem não permitida.' });
+    const origin = requestOrigin || returnOrigin;
     if (req.method === 'OPTIONS') return reply(200, {}, origin);
     if (req.method !== 'POST') return reply(405, { error: 'Método não permitido.' }, origin);
     const jwt = req.headers.get('authorization')?.match(/^Bearer (\S+)$/i)?.[1];
     if (!jwt) return reply(401, { error: 'Entre na sua conta.' }, origin);
     if (!deps.accessToken || !deps.webhookSecret) return reply(503, { error: 'Pagamento ainda não configurado.' }, origin);
+    let stage: CheckoutDiagnostic['stage'] = 'request';
+    let providerStartDeltaMs: number | null | undefined;
     try {
       const body = await jsonBody(req);
       if (!uuid.test(body?.empresa_id)) return reply(400, { error: 'Empresa inválida.' }, origin);
+      if (body.consultar === true) {
+        if (!deps.lookup) throw new Error('Subscription lookup unavailable');
+        stage = 'lookup';
+        const saved = await deps.lookup(jwt, body.empresa_id);
+        if (!saved?.preapproval_id) return reply(200, { estado: 'sem_checkout' }, origin);
+        if (saved.ambiente !== (deps.live ? 'production' : 'test')) return reply(503, { error: 'Pagamentos ainda estão em validação.' }, origin);
+        stage = 'reconcile';
+        const estado = await syncSubscription(deps, saved.preapproval_id, saved.id);
+        return reply(200, { estado }, origin);
+      }
       // reserve validates the JWT and approved manager membership on the server.
+      stage = 'reserve';
       const checkout = await deps.reserve(jwt, body.empresa_id);
+      stage = 'plan';
       if (!uuid.test(checkout.id) || Number(checkout.valor) !== 149.90) throw new Error('Invalid plan');
       if (checkout.ambiente !== (deps.live ? 'production' : 'test')) return reply(503, { error: 'Pagamentos ainda estão em validação. Tente novamente mais tarde.' }, origin);
-      if (checkout.url) return reply(200, { url: checkoutUrl(checkout.url) }, origin);
+      if (checkout.url) {
+        stage = 'reconcile';
+        const estado = await syncSubscription(deps, String(checkout.preapproval_id), checkout.id);
+        if (estado === 'authorized') return reply(200, { estado }, origin);
+        if (estado !== 'pending') return reply(409, { error: 'A assinatura foi pausada ou cancelada. Atualize a situação antes de continuar.' }, origin);
+        return reply(200, { url: checkoutUrl(checkout.url) }, origin);
+      }
+      let scheduledStart: string | undefined;
+      let idempotencyKey = checkout.id;
+      stage = 'schedule';
+      if (checkout.inicio_cobranca) {
+        const start = Date.parse(checkout.inicio_cobranca), serverNow = Date.parse(checkout.servidor_em || '');
+        if (!Number.isFinite(start) || !Number.isFinite(serverNow)) throw new Error('Invalid billing schedule');
+        if (start > serverNow) {
+          // Mercado Pago returns whole seconds. Round upward so its response
+          // cannot schedule a charge before the original trial ends.
+          const wholeSecondStart = Math.ceil(start / 1000) * 1000;
+          scheduledStart = new Date(wholeSecondStart).toISOString();
+          // A previous fractional request may already be cached by the provider.
+          // Keep retries stable without reusing that rejected schedule.
+          if (wholeSecondStart !== start) idempotencyKey += '-' + wholeSecondStart;
+        }
+      }
+      stage = 'provider';
       const subscription = await mp(deps, '/preapproval', { method: 'POST',
-        headers: { 'X-Idempotency-Key': checkout.id }, body: JSON.stringify({
+        headers: { 'X-Idempotency-Key': idempotencyKey }, body: JSON.stringify({
           reason: 'EntregaCondo · Plano mensal', external_reference: checkout.id, payer_email: checkout.email,
-          auto_recurring: { frequency: 1, frequency_type: 'months', transaction_amount: 149.90, currency_id: 'BRL' },
-          back_url: origin + '/#/assinatura', status: 'pending',
+          auto_recurring: { frequency: 1, frequency_type: 'months', transaction_amount: 149.90, currency_id: 'BRL', ...(scheduledStart ? { start_date: scheduledStart } : {}) },
+          back_url: returnOrigin + '/#/assinatura', status: 'pending',
         }),
       });
       if (typeof subscription.id !== 'string' || !resourceId.test(subscription.id)) throw new Error('Invalid subscription');
+      stage = 'schedule';
+      if (scheduledStart) {
+        const actual = Date.parse(subscription.auto_recurring?.start_date);
+        providerStartDeltaMs = Number.isFinite(actual) ? actual - Date.parse(scheduledStart) : null;
+        if (providerStartDeltaMs !== 0) throw new Error('Provider did not preserve trial');
+      }
+      stage = 'url';
       const url = checkoutUrl(subscription.init_point);
+      stage = 'link';
       if (!await deps.link(checkout.id, String(subscription.id), url)) throw new Error('Checkout changed');
       return reply(200, { url }, origin);
-    } catch { return reply(400, { error: 'Não foi possível preparar o pagamento. Confira seu acesso e tente novamente.' }, origin); }
+    } catch {
+      try { deps.reportCheckoutFailure?.({ stage, ...(stage === 'schedule' && providerStartDeltaMs !== undefined ? { providerStartDeltaMs } : {}) }); } catch { /* Diagnostics cannot affect billing. */ }
+      return reply(400, { error: 'Não foi possível preparar o pagamento. Confira seu acesso e tente novamente.' }, origin);
+    }
   };
 }
 
@@ -103,6 +209,10 @@ export function createSubscriptionWebhook(deps: Dependencies) {
       if (!await validWebhookSignature(req, id, deps.webhookSecret)) return reply(401, {});
       const body = await jsonBody(req); const type = body?.type;
       if (String(body?.data?.id).toLowerCase() !== id.toLowerCase() || (url.searchParams.has('type') && url.searchParams.get('type') !== type)) return reply(400, {});
+      if (type === 'subscription_preapproval') {
+        await syncSubscription(deps, id);
+        return reply(200, { received: true });
+      }
       if (!['subscription_authorized_payment', 'payment'].includes(type)) return reply(200, { received: true });
       if (!/^\d{1,30}$/.test(id)) return reply(400, {});
       let context: PaymentContext; let payment;

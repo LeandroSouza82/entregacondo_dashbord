@@ -23,7 +23,16 @@ export async function hasActiveSupabaseSession(): Promise<boolean> {
   }
 }
 
-export async function requireCompanyId(): Promise<string> {
+export class TrialRegistrationRequiredError extends Error {
+  constructor() { super('Complete seu cadastro para liberar os 30 dias grátis.'); }
+}
+
+export type TrialRegistration = {
+  tipo_pessoa: 'pf' | 'pj'; documento: string; nome_responsavel: string;
+  razao_social: string; nome_fantasia: string; celular: string;
+};
+
+export async function requireCompanyId(registration?: TrialRegistration): Promise<string> {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) throw new Error('Não foi possível conferir sua sessão. Entre novamente.');
   if (!sessionData.session) {
@@ -41,7 +50,9 @@ export async function requireCompanyId(): Promise<string> {
       return access.empresa_id;
     }
     if (attempt === 0 && access?.status === 'sem_vinculo') {
-      const result = await supabase.rpc('iniciar_teste_empresa', {});
+      localStorage.removeItem('ec_active_company_id');
+      if (!registration) throw new TrialRegistrationRequiredError();
+      const result = await supabase.rpc('registrar_teste_empresa', { p_cadastro: registration });
       if (result.error) throw new Error(result.error.message || 'Não foi possível iniciar o teste.');
       if (!(result.data as {sucesso?: boolean})?.sucesso) throw new Error('Não foi possível preparar sua empresa.');
       continue;

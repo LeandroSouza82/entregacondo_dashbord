@@ -11,3 +11,11 @@ export const isSupabaseConfigured = Boolean(
 );
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+
+// Email actions use a short-lived client; confirming an email must not sign the
+// browser straight into the dashboard or replace an existing account session.
+export function createEmailActionClient() {
+  return createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'ec-email-action' },
+  });
+}
