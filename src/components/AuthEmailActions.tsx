@@ -37,8 +37,11 @@ export function AuthEmailActions({ email, onConfirmationRequested }: { email: st
     finally { setBusy(false); }
   }
   return <section aria-label="Ajuda para acessar sua conta" className="space-y-2 border-t border-slate-200 pt-4 text-sm">
-    <button type="button" onClick={() => void google()} disabled={busy} className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">Continuar com Google</button>
-    <p className="text-xs text-slate-600">Já usava Google? Entre por ele. Uma nova tentativa de cadastro não cria nem troca a senha da sua conta.</p>
+    <button type="button" onClick={() => void google()} disabled={busy} aria-describedby="google-sign-in-help" className="flex min-h-12 w-full items-center justify-center gap-2.5 rounded-full border border-[#747775] bg-white px-3 py-3 text-sm font-medium text-[#1f1f1f] transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-50" style={{ fontFamily: '"Google Sans", Arial, sans-serif' }}>
+      <img src="/brand/google-g.png" alt="" aria-hidden="true" width={20} height={20} className="h-5 w-5 shrink-0" />
+      <span>Entrar com Google</span>
+    </button>
+    <p id="google-sign-in-help" className="text-xs leading-relaxed text-slate-600">Clique no botão para escolher sua conta Google e entrar no EntregaCondo. Não é preciso preencher e-mail ou senha nos campos acima. Se já usava Google, escolha a mesma conta.</p>
     <button type="button" onClick={() => void send('recovery')} disabled={busy || seconds > 0} className="min-h-11 w-full rounded-lg px-2 text-left font-semibold text-orange-800 underline disabled:opacity-50">Esqueci ou quero definir minha senha</button>
     <button type="button" onClick={() => void send('confirmation')} disabled={busy || seconds > 0} className="min-h-11 w-full rounded-lg px-2 text-left text-slate-700 underline disabled:opacity-50">Reenviar confirmação de e-mail</button>
     {seconds > 0 && <p className="text-xs text-slate-500">Aguarde {seconds}s para solicitar outro e-mail.</p>}
