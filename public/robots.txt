@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /comprovante/
+Disallow: /*?*
+
+Sitemap: https://entregacondo.com.br/sitemap.xml

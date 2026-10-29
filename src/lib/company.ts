@@ -50,6 +50,7 @@ export async function requireCompanyId(registration?: TrialRegistration): Promis
       return access.empresa_id;
     }
     if (attempt === 0 && access?.status === 'sem_vinculo') {
+      localStorage.removeItem('ec_active_company_id');
       if (!registration) throw new TrialRegistrationRequiredError();
       const result = await supabase.rpc('registrar_teste_empresa', { p_cadastro: registration });
       if (result.error) throw new Error(result.error.message || 'Não foi possível iniciar o teste.');

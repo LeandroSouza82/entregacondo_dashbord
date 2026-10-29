@@ -13,6 +13,8 @@ import {
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { requireCompanyId, TrialRegistrationRequiredError } from '../lib/company';
 import { TrialRegistrationForm } from './TrialRegistrationForm';
+import { AuthEmailActions } from './AuthEmailActions';
+import { EmailCodeForm } from './EmailCodeForm';
 
 type AuthMode = 'login' | 'cadastro';
 
@@ -20,11 +22,14 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
   const [session, setSession] = useState<Session | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
-  const [allowed, setAllowed] = useState(false);
-  const [needsRegistration, setNeedsRegistration] = useState(false);
+  const [authorizedUserId, setAuthorizedUserId] = useState<string | null>(null);
+  const [registrationUserId, setRegistrationUserId] = useState<string | null>(null);
+  const allowed = Boolean(session && authorizedUserId === session.user.id);
+  const needsRegistration = Boolean(session && registrationUserId === session.user.id);
   const [error, setError] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState(() => window.location.hash.includes('ativado=1') ? 'Acesso ativado! Entre com seu e-mail e senha para começar.' : window.location.hash.includes('senha=definida') ? 'Senha definida! Entre com seu e-mail e a nova senha.' : '');
   const [busy, setBusy] = useState(false);
+  const [confirmationEmail, setConfirmationEmail] = useState('');
   const [demoAtivo, setDemoAtivo] = useState<boolean>(() => {
     if (typeof window === 'undefined' || !import.meta.env.DEV) return false;
     const fromQuery = new URLSearchParams(window.location.search).get('demo') === 'true';
@@ -69,8 +74,8 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         setSession(value);
         setCurrentUser(value?.user ?? null);
         if (!value) {
-          setAllowed(false);
-          setNeedsRegistration(false);
+          setAuthorizedUserId(null);
+          setRegistrationUserId(null);
         }
         setError('');
       }
@@ -88,21 +93,21 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
     async function validarAcesso() {
       if (!session) return;
       setError('');
-      setAllowed(false);
-      setNeedsRegistration(false);
+      setAuthorizedUserId(null);
+      setRegistrationUserId(null);
 
       try {
         await requireCompanyId();
         if (active) {
-          setAllowed(true);
-          setNeedsRegistration(false);
+          setAuthorizedUserId(session.user.id);
+          setRegistrationUserId(null);
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
 
         if (active) {
           if (err instanceof TrialRegistrationRequiredError) {
-            setNeedsRegistration(true);
+            setRegistrationUserId(session.user.id);
           } else {
             setError(msg);
           }
@@ -134,6 +139,10 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
       });
 
       if (signInError) {
+        if (signInError.code === 'email_not_confirmed') {
+          setConfirmationEmail(email.trim());
+          return;
+        }
         if (signInError.message.includes('Invalid login credentials')) {
           throw new Error('E-mail ou senha incorretos.');
         }
@@ -174,7 +183,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         email: email.trim(),
         password,
         options: {
-          emailRedirectTo: window.location.origin + '/',
+          emailRedirectTo: window.location.origin + '/?auth_action=signup',
           data: {
             name: nomeCompleto.trim(),
             full_name: nomeCompleto.trim(),
@@ -187,6 +196,13 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
           throw new Error('Este e-mail já está cadastrado. Alterne para "Já tenho conta" para fazer login.');
         }
         throw signUpError;
+      }
+
+      if (!signUpData.session && signUpData.user?.identities?.length === 0) {
+        setPassword('');
+        setModo('login');
+        setSuccessMessage('Este e-mail já possui cadastro. Entre com Google ou use a opção para recuperar sua senha.');
+        return;
       }
 
       let activeUser = signUpData.user;
@@ -210,8 +226,8 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         setSession(activeSession);
         setCurrentUser(activeUser);
       } else {
-        setSuccessMessage('Conta criada! Confirme seu e-mail e entre para concluir o cadastro com CPF ou CNPJ. Seus 30 dias começam após essa etapa.');
-        setModo('login');
+        setPassword('');
+        setConfirmationEmail(email.trim());
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Não foi possível concluir o cadastro.');
@@ -238,7 +254,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
               }
               setDemoAtivo(false);
               setSession(null);
-              setAllowed(false);
+              setAuthorizedUserId(null);
               void supabase.auth.signOut();
             }}
           >
@@ -288,6 +304,8 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
           <div className="text-center py-8 text-slate-500 text-sm animate-pulse">
             Carregando EntregaCondo…
           </div>
+        ) : confirmationEmail && !session ? (
+          <EmailCodeForm email={confirmationEmail} onBack={() => setConfirmationEmail('')} />
         ) : session && needsRegistration ? (
           <TrialRegistrationForm
             key={session.user.id}
@@ -295,8 +313,8 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
             initialName={currentUser?.user_metadata?.full_name || currentUser?.user_metadata?.name || ''}
             onComplete={async registration => {
               await requireCompanyId(registration);
-              setNeedsRegistration(false);
-              setAllowed(true);
+              setRegistrationUserId(null);
+              setAuthorizedUserId(session.user.id);
               setError('');
             }}
             onSignOut={async () => { await supabase.auth.signOut(); }}
@@ -432,6 +450,8 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
                 </button>
               </form>
             )}
+
+            {modo === 'login' && <AuthEmailActions email={email} onConfirmationRequested={setConfirmationEmail} />}
 
             {/* FORMULÁRIO DE CADASTRO DE GESTOR */}
             {modo === 'cadastro' && <p className="text-xs leading-relaxed text-slate-600">Etapa 1 de 2: crie sua conta e confirme o e-mail. Em seguida, complete o cadastro com CPF ou CNPJ para liberar 30 dias grátis, sem cartão. Depois, R$ 149,90/mês por empresa, com até 3 motoristas ativos e 1.000 atendimentos por mês. Seus dados ficam preservados se não assinar.</p>}

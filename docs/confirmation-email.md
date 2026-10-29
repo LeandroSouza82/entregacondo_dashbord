@@ -3,15 +3,12 @@
 Assunto: **Confirme seu e-mail | EntregaCondo**.
 Fonte: `supabase/templates/confirmation.html`.
 
-O modelo usa o logo atual, azul escuro e laranja da marca, botão de confirmação,
-link alternativo e explicação sobre o início do teste. Utiliza tabelas e estilos
+O modelo usa o logo atual, azul escuro e laranja da marca, código de confirmação de uso único, e explicação sobre o início do teste. Utiliza tabelas e estilos
 inline para clientes de e-mail. O texto continua identificando a marca mesmo
 quando imagens externas estão desabilitadas. Não contém scripts, formulários,
 fontes remotas, CPF/CNPJ, variáveis de perfil ou prazo de expiração fixo.
 
-O botão e o link alternativo usam `{{ .ConfirmationURL }}` gerado pelo Supabase.
-Não substitua pelo domínio do painel nem por um link da prévia. É confirmação
-por link, compatível com o fluxo atual; não é uma tela para digitar OTP.
+O código usa `{{ .Token }}` gerado pelo Supabase. A tela valida o código com `verifyOtp` e tipo `signup`; a sessão confirmada prossegue ao cadastro documental. O reenvio usa `resend` e espera de 60 segundos na interface; o servidor aplica os limites reais.
 
 ## Configuração hospedada
 

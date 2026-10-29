@@ -63,6 +63,7 @@ const FILE_ORDER = [
   path.join(MODULES_DIR, '11_company_trial.sql'),
   path.join(MODULES_DIR, '12_subscription_payments.sql'),
   path.join(MODULES_DIR, '13_trial_registration.sql'),
+  path.join(MODULES_DIR, '13_early_subscription.sql'),
 ];
 
 function buildSchema() {

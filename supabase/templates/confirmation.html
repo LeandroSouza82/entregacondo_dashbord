@@ -21,21 +21,16 @@
         <tr><td style="padding:30px 24px 12px;">
           <p style="margin:0 0 10px;color:#c2410c;font-size:12px;line-height:18px;font-weight:700;letter-spacing:1px;">BEM-VINDO AO ENTREGACONDO</p>
           <h1 style="margin:0 0 18px;color:#172033;font-size:24px;line-height:32px;font-weight:700;">Confirme seu e-mail<br>para continuar.</h1>
-          <p style="margin:0 0 16px;font-size:16px;line-height:26px;color:#475569;">Falta pouco para começar. Toque no botão abaixo para confirmar seu endereço de e-mail e continuar seu cadastro.</p>
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;width:100%;">
-            <tr><td align="center" bgcolor="#c2410c" style="background-color:#c2410c;border-radius:10px;mso-padding-alt:16px 18px;">
-              <a href="{{ .ConfirmationURL }}" style="display:block;padding:16px 18px;border:1px solid #c2410c;border-radius:10px;color:#ffffff;font-size:16px;line-height:22px;font-weight:700;text-decoration:none;text-align:center;">Confirmar meu e-mail</a>
-            </td></tr>
-          </table>
+          <p style="margin:0 0 16px;font-size:16px;line-height:26px;color:#475569;">Falta pouco para começar. Digite o código abaixo na tela do EntregaCondo para confirmar seu e-mail e continuar seu cadastro.</p>
+          <p style="margin:24px 0;padding:20px;text-align:center;background:#fff7ed;color:#9a3412;font-size:32px;font-weight:bold;letter-spacing:6px;">{{ .Token }}</p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#fff7ed" style="padding:16px;border-left:3px solid #ea580c;border-radius:8px;background-color:#fff7ed;">
             <p style="margin:0;color:#9a3412;font-size:14px;line-height:23px;"><strong>30 dias grátis, sem cartão.</strong><br>Seu teste começa quando você concluir o cadastro no sistema.</p>
           </td></tr></table>
-          <p style="margin:24px 0 8px;color:#64748b;font-size:12px;line-height:20px;">Se o botão não abrir, copie o link abaixo e cole no navegador:</p>
-          <p style="margin:0 0 20px;font-size:12px;line-height:20px;word-break:break-all;overflow-wrap:anywhere;"><a href="{{ .ConfirmationURL }}" style="color:#c2410c;text-decoration:underline;word-break:break-all;">{{ .ConfirmationURL }}</a></p>
+          <p style="margin:24px 0;color:#64748b;font-size:13px;line-height:20px;">O código é de uso único. Se vencer, solicite outro na tela de confirmação.</p>
         </td></tr>
         <tr><td style="padding:20px 24px 26px;border-top:1px solid #e2e8f0;">
           <p style="margin:0 0 8px;color:#64748b;font-size:12px;line-height:20px;">Se você não solicitou este cadastro, ignore esta mensagem.</p>
-          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:20px;">EntregaCondo · Confirmação de cadastro<br>Não compartilhe este link de confirmação.</p>
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:20px;">EntregaCondo · Confirmação de cadastro<br>Não compartilhe este código de confirmação.</p>
         </td></tr>
       </table>
       <!--[if mso]></td></tr></table><![endif]-->

@@ -11,10 +11,12 @@ import { CustomerTrackingView } from './components/public/CustomerTrackingView';
 import { CompanyRecords } from './components/CompanyRecords';
 import { PublicReceiptView } from './components/public/PublicReceiptView';
 
+const EmailActionView = lazy(() => import('./components/EmailActionView'));
 const EntregaCondoPresentation = lazy(() => import('./components/public/EntregaCondoPresentation'));
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
+  const [emailActionKey, setEmailActionKey] = useState(() => window.location.hash);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => /^#\/?assinatura\/?$/.test(window.location.hash) ? 'settings' : 'overview');
   const [currentPath, setCurrentPath] = useState(() => ({
     pathname: typeof window !== 'undefined' ? window.location.pathname : '',
     hash: typeof window !== 'undefined' ? window.location.hash : '',
@@ -22,6 +24,8 @@ export function App() {
 
   useEffect(() => {
     const handleLocationChange = () => {
+      if (new URLSearchParams(window.location.hash.split('?')[1] || '').has('token_hash')) setEmailActionKey(window.location.hash);
+      if (/^#\/?assinatura\/?$/.test(window.location.hash)) setActiveTab('settings');
       setCurrentPath({
         pathname: window.location.pathname,
         hash: window.location.hash,
@@ -34,6 +38,15 @@ export function App() {
       window.removeEventListener('hashchange', handleLocationChange);
     };
   }, []);
+
+  const emailAction = new URLSearchParams(window.location.search).get('auth_action');
+  if (emailAction === 'signup' || emailAction === 'recovery') {
+    return <Suspense fallback={<main role="status" className="p-6">Conferindo seu acesso…</main>}><EmailActionView legacy recovery={emailAction === 'recovery'} /></Suspense>;
+  }
+  if (/^#\/?(ativar|definir-senha)(?:[?]|$)/.test(currentPath.hash)) {
+    // Clearing a consumed token from history must not remount the recovery form.
+    return <Suspense fallback={<main role="status" className="p-6">Conferindo seu acesso…</main>}><EmailActionView key={emailActionKey} recovery={currentPath.hash.includes('definir-senha')} /></Suspense>;
+  }
 
   if (/^#\/?conheca\/?$/.test(currentPath.hash)) {
     return <Suspense fallback={<main role="status" className="p-6">Carregando apresentação…</main>}><EntregaCondoPresentation /></Suspense>;
