@@ -11,7 +11,7 @@ SELECT pg_temp.trial_check(NOT has_function_privilege('anon','public.iniciar_tes
 SELECT pg_temp.trial_check(NOT has_table_privilege('authenticated','ec_private.assinaturas_empresas','UPDATE'),'browser cannot extend subscription');
 SELECT set_config('request.jwt.claim.sub','ab000000-0000-0000-0000-000000000001',true);
 SET LOCAL ROLE authenticated;
-SELECT set_config('trial.a',(public.iniciar_teste_empresa()->>'empresa_id'),true);
+SELECT set_config('trial.a',(public.registrar_teste_empresa('{"tipo_pessoa":"pf","documento":"52998224725","nome_responsavel":"Trial A","celular":"48999999999","nome_fantasia":"Essenza Teste"}')->>'empresa_id'),true);
 SELECT pg_temp.trial_check(public.iniciar_teste_empresa('Another name')->>'empresa_id'=current_setting('trial.a'),'retry returns same company');
 SELECT pg_temp.trial_check((SELECT count(*)=1 FROM public.empresas),'company A sees only its own company');
 RESET ROLE;
@@ -20,7 +20,7 @@ SELECT pg_temp.trial_check((SELECT teste_fim=teste_inicio+interval '30 days' AND
 SELECT pg_temp.trial_check((SELECT nome='Essenza Teste' AND cidade IS NULL FROM public.empresas WHERE id=current_setting('trial.a')::uuid),'display name saved without fabricated city');
 SELECT set_config('request.jwt.claim.sub','ab000000-0000-0000-0000-000000000002',true);
 SET LOCAL ROLE authenticated;
-SELECT set_config('trial.b',(public.iniciar_teste_empresa()->>'empresa_id'),true);
+SELECT set_config('trial.b',(public.registrar_teste_empresa('{"tipo_pessoa":"pj","documento":"11222333000181","nome_responsavel":"Trial B","razao_social":"Outra Empresa","celular":"48999999998"}')->>'empresa_id'),true);
 SELECT pg_temp.trial_check((SELECT count(*)=1 FROM public.empresas),'company B sees only its own company');
 SELECT pg_temp.trial_check((SELECT count(*)=0 FROM public.empresas WHERE id=current_setting('trial.a')::uuid),'company B cannot read company A');
 DO $$ BEGIN

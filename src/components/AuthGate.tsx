@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode, type FormEvent } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { 
-  Building2, 
   User as UserIcon, 
   Mail, 
   Lock, 
@@ -12,7 +11,8 @@ import {
   EyeOff
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { requireCompanyId } from '../lib/company';
+import { requireCompanyId, TrialRegistrationRequiredError } from '../lib/company';
+import { TrialRegistrationForm } from './TrialRegistrationForm';
 
 type AuthMode = 'login' | 'cadastro';
 
@@ -21,6 +21,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
   const [allowed, setAllowed] = useState(false);
+  const [needsRegistration, setNeedsRegistration] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -49,7 +50,6 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nomeCompleto, setNomeCompleto] = useState('');
-  const [nomeEmpresa, setNomeEmpresa] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -70,6 +70,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         setCurrentUser(value?.user ?? null);
         if (!value) {
           setAllowed(false);
+          setNeedsRegistration(false);
         }
         setError('');
       }
@@ -88,17 +89,23 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
       if (!session) return;
       setError('');
       setAllowed(false);
+      setNeedsRegistration(false);
 
       try {
         await requireCompanyId();
         if (active) {
           setAllowed(true);
+          setNeedsRegistration(false);
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
 
         if (active) {
-          setError(msg);
+          if (err instanceof TrialRegistrationRequiredError) {
+            setNeedsRegistration(true);
+          } else {
+            setError(msg);
+          }
         }
       }
     }
@@ -155,9 +162,6 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
       if (!nomeCompleto.trim()) {
         throw new Error('Informe seu nome completo.');
       }
-      if (nomeEmpresa.trim().length < 2 || nomeEmpresa.trim().length > 120) {
-        throw new Error('Informe o nome da empresa entre 2 e 120 caracteres.');
-      }
       if (!email.trim()) {
         throw new Error('Informe um e-mail válido.');
       }
@@ -174,7 +178,6 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
           data: {
             name: nomeCompleto.trim(),
             full_name: nomeCompleto.trim(),
-            empresa_nome: nomeEmpresa.trim(),
           },
         },
       });
@@ -207,7 +210,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
         setSession(activeSession);
         setCurrentUser(activeUser);
       } else {
-        setSuccessMessage('Cadastro recebido! Confirme seu e-mail e entre para iniciar seus 30 dias grátis.');
+        setSuccessMessage('Conta criada! Confirme seu e-mail e entre para concluir o cadastro com CPF ou CNPJ. Seus 30 dias começam após essa etapa.');
         setModo('login');
       }
     } catch (e) {
@@ -271,9 +274,9 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
             EntregaCondo <span className="text-orange-600">·</span> Gestão
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 font-medium">
-            {modo === 'login'
+            {needsRegistration ? 'Complete os dados para liberar seu teste grátis' : modo === 'login'
               ? 'Acesse o painel operacional da sua administradora'
-              : 'Cadastre sua empresa e personalize seus atendimentos'}
+              : 'Crie sua conta para começar o cadastro'}
           </p>
         </div>
 
@@ -285,6 +288,19 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
           <div className="text-center py-8 text-slate-500 text-sm animate-pulse">
             Carregando EntregaCondo…
           </div>
+        ) : session && needsRegistration ? (
+          <TrialRegistrationForm
+            key={session.user.id}
+            email={session.user.email || ''}
+            initialName={currentUser?.user_metadata?.full_name || currentUser?.user_metadata?.name || ''}
+            onComplete={async registration => {
+              await requireCompanyId(registration);
+              setNeedsRegistration(false);
+              setAllowed(true);
+              setError('');
+            }}
+            onSignOut={async () => { await supabase.auth.signOut(); }}
+          />
         ) : session ? (
           <div className="space-y-4">
             <p className="text-slate-600 text-sm text-center">{error || 'Conferindo acesso à empresa…'}</p>
@@ -418,7 +434,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
             )}
 
             {/* FORMULÁRIO DE CADASTRO DE GESTOR */}
-            {modo === 'cadastro' && <p className="text-xs leading-relaxed text-slate-600">30 dias grátis, sem cartão. Depois, R$ 149,90/mês por empresa, com até 3 motoristas ativos e 1.000 atendimentos por mês. Seus dados ficam preservados se não assinar.</p>}
+            {modo === 'cadastro' && <p className="text-xs leading-relaxed text-slate-600">Etapa 1 de 2: crie sua conta e confirme o e-mail. Em seguida, complete o cadastro com CPF ou CNPJ para liberar 30 dias grátis, sem cartão. Depois, R$ 149,90/mês por empresa, com até 3 motoristas ativos e 1.000 atendimentos por mês. Seus dados ficam preservados se não assinar.</p>}
             {modo === 'cadastro' && (
               <form onSubmit={registrarGestor} className="space-y-4">
                 <div>
@@ -436,29 +452,6 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
                       onChange={(e) => setNomeCompleto(e.target.value)}
                     />
                   </div>
-                </div>
-
-                <div>
-                  <label htmlFor="company-name" className="block text-xs font-bold text-slate-800 mb-1.5">
-                    Nome da sua empresa <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <input
-                      className="w-full pl-10 pr-3.5 h-11 bg-white border-2 border-slate-200 hover:border-slate-300 rounded-xl text-sm font-semibold text-slate-900 placeholder:text-slate-400 shadow-2xs focus:outline-none focus:border-orange-500 focus:ring-4 focus:ring-orange-500/15 transition-all"
-                      type="text"
-                      id="company-name"
-                      placeholder="Ex: Essenza Condomínios"
-                      autoComplete="organization"
-                      minLength={2}
-                      maxLength={120}
-                      aria-describedby="company-name-help"
-                      required
-                      value={nomeEmpresa}
-                      onChange={(e) => setNomeEmpresa(e.target.value)}
-                    />
-                  </div>
-                  <p id="company-name-help" className="mt-2 text-xs leading-relaxed text-slate-500">Este nome identifica sua empresa nas mensagens, no acompanhamento e nos comprovantes. Você pode alterá-lo em Configurações.</p>
                 </div>
 
                 <div>
@@ -513,7 +506,7 @@ export function AuthGate({ children, initialMode = 'login' }: { children: ReactN
                   className="w-full bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold rounded-xl py-3 shadow-md shadow-orange-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>{busy ? 'Preparando cadastro…' : 'Criar conta e testar grátis'}</span>
+                  <span>{busy ? 'Preparando cadastro…' : 'Criar conta e confirmar e-mail'}</span>
                 </button>
               </form>
             )}

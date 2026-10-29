@@ -4,7 +4,8 @@ export async function trialConcurrency(db, connect) {
  await db.query("insert into auth.users(id,email,email_confirmed_at,raw_user_meta_data) values($1,'concurrent-trial@example.test',now(),'{\"empresa_nome\":\"Concurrent Company\"}')",[user]);
  const left=await connect(),right=await connect();
  for(const c of [left,right])await c.query("select set_config('request.jwt.claim.sub',$1,false)",[user]);
- const results=await Promise.all([left.query('select public.iniciar_teste_empresa() as result'),right.query('select public.iniciar_teste_empresa() as result')]);
+ const registration={tipo_pessoa:'pf',documento:'11144477735',nome_responsavel:'Concurrent User',celular:'48999999999'};
+ const results=await Promise.all([left.query("select public.registrar_teste_empresa($1) as result",[registration]),right.query("select public.registrar_teste_empresa($1) as result",[registration])]);
  const company=results[0].rows[0].result.empresa_id;
  assert.equal(results[1].rows[0].result.empresa_id,company);
  assert.equal((await db.query('select count(*)::int as n from ec_private.assinaturas_empresas where titular_id=$1',[user])).rows[0].n,1);
@@ -17,7 +18,20 @@ export async function trialConcurrency(db, connect) {
  const checkouts=await Promise.all([left.query('select public.preparar_checkout_assinatura($1) as result',[company]),right.query('select public.preparar_checkout_assinatura($1) as result',[company])]);
  assert.equal(checkouts[0].rows[0].result.id,checkouts[1].rows[0].result.id);
  for(const c of [left,right]){await c.query('reset role');await c.query("select set_config('request.jwt.claim.sub','',false)");}
- return 3;
+ // Different accounts racing for the same document: exactly one wins.
+ const otherUsers=['ab000000-0000-0000-0000-000000000097','ab000000-0000-0000-0000-000000000098'];
+ for(let i=0;i<2;i++) {
+  await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())",[otherUsers[i],`document-race-${i}@example.test`]);
+  await [left,right][i].query("select set_config('request.jwt.claim.sub',$1,false)",[otherUsers[i]]);
+  await [left,right][i].query('set role authenticated');
+ }
+ const shared={tipo_pessoa:'pj',documento:'11222333000181',nome_responsavel:'Race User',razao_social:'Race Company',celular:'48999999999'};
+ const outcomes=await Promise.allSettled([left.query('select public.registrar_teste_empresa($1)',[shared]),right.query('select public.registrar_teste_empresa($1)',[shared])]);
+ assert.equal(outcomes.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal(outcomes.filter(r=>r.status==='rejected'&&r.reason.code==='42501').length,1);
+ assert.equal((await db.query("select count(*)::int n from ec_private.documentos_teste where documento=$1",[shared.documento])).rows[0].n,1);
+ for(const c of [left,right]){await c.query('reset role');await c.query("select set_config('request.jwt.claim.sub','',false)");}
+ return 4;
 }
 
 export async function legacyPolicyCleanup(db, read) {
@@ -45,6 +59,7 @@ export async function legacyPolicyCleanup(db, read) {
   await db.query('RESET ROLE');
   await db.query("GRANT EXECUTE ON FUNCTION public.bootstrap_primeiro_gestor(text,text,text) TO authenticated");
   await db.query(read('supabase/modules-sql/11_company_trial.sql'));
+  await db.query(read('supabase/modules-sql/13_trial_registration.sql'));
   assert.equal((await db.query("SELECT has_function_privilege('authenticated','public.bootstrap_primeiro_gestor(text,text,text)','EXECUTE') allowed")).rows[0].allowed,false);
   for (const [table,name] of policies) {
    assert.equal((await db.query('SELECT count(*)::int n FROM pg_policies WHERE schemaname=$1 AND tablename=$2 AND policyname=$3',['public',table,name])).rows[0].n,0);

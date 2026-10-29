@@ -47,6 +47,8 @@ try {
    const trialSummary=trial.find(r=>r.fields?.some(f=>f.name==='trial_passed'));
    if(!trialSummary || +trialSummary.rows[0].trial_passed<20)throw new Error('Trial suite incomplete.');
    console.log(name+': '+trialSummary.rows[0].trial_passed+' verificações de cadastro, isolamento e teste grátis passaram.');
+   await db.query(read('supabase/tests/trial_registration_tests.sql'));
+   console.log(name+': cadastro CPF/CNPJ, duplicação, privacidade e exclusão passaram.');
    await db.query(read('supabase/tests/customer_tracking_tests.sql'));
    console.log(name+': cenários de acompanhamento, privacidade e preservação passaram.');
    await db.query(read('supabase/tests/release_compatibility_tests.sql'));
@@ -79,7 +81,7 @@ try {
   }
   console.log('Regras opcionais validadas em instalação nova e atualização.');
  } else if(process.argv.includes('--tracking-only')) { console.log('Acompanhamento validado em instalação nova e atualização.'); } else {
- const names=[...new Set(fs.readdirSync(path.join(root,'supabase/functions-sql')).filter(f=>f.endsWith('.sql')).map(f=>f.slice(0,-4)).concat(['atualizar_meu_nome_motorista','fn_usuario_e_gestor_empresa','fn_usuario_e_admin_empresa','fn_motorista_id_do_usuario','registrar_dispositivo_push','desativar_dispositivo_push','fn_enfileirar_push_servicos','reivindicar_push_envios','finalizar_push_envio','fn_acordar_push_worker','fn_acordar_push_apos_fila','fn_safe_uuid','criar_compartilhamento_comprovante','obter_comprovante_compartilhado','revogar_compartilhamento_comprovante','obter_capacidades_rotas','preparar_aviso_cliente','obter_acompanhamento_cliente','configurar_nome_empresa','iniciar_teste_empresa','obter_minha_assinatura','preparar_checkout_assinatura','vincular_checkout_assinatura','registrar_pagamento_assinatura','obter_contexto_pagamento_assinatura']))];
+ const names=[...new Set(fs.readdirSync(path.join(root,'supabase/functions-sql')).filter(f=>f.endsWith('.sql')).map(f=>f.slice(0,-4)).concat(['atualizar_meu_nome_motorista','fn_usuario_e_gestor_empresa','fn_usuario_e_admin_empresa','fn_motorista_id_do_usuario','registrar_dispositivo_push','desativar_dispositivo_push','fn_enfileirar_push_servicos','reivindicar_push_envios','finalizar_push_envio','fn_acordar_push_worker','fn_acordar_push_apos_fila','fn_safe_uuid','criar_compartilhamento_comprovante','obter_comprovante_compartilhado','revogar_compartilhamento_comprovante','obter_capacidades_rotas','preparar_aviso_cliente','obter_acompanhamento_cliente','configurar_nome_empresa','iniciar_teste_empresa','registrar_teste_empresa','documento_valido','obter_minha_assinatura','preparar_checkout_assinatura','vincular_checkout_assinatura','registrar_pagamento_assinatura','obter_contexto_pagamento_assinatura']))];
  const catalog=await compareLiveCatalogs(databases.get('ec_fresh'),databases.get('ec_upgrade'),names);
  console.log('Catálogos reais equivalentes: '+catalog.functions+' funções, '+catalog.policies+' políticas, '+catalog.constraints+' constraints da fila.');
  for(const name of ['ec_fresh','ec_upgrade']){
