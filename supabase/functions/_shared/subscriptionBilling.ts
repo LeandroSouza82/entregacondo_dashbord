@@ -4,6 +4,10 @@ type BillingDiagnostic = {
   status: number;
   reason: 'test_account_mismatch' | 'invalid_credentials' | 'invalid_return_url' | 'invalid_payer' | 'provider_rejected' | 'provider_unavailable' | 'network_unavailable';
 };
+type CheckoutDiagnostic = {
+  stage: 'request' | 'lookup' | 'reconcile' | 'reserve' | 'plan' | 'provider' | 'schedule' | 'url' | 'link';
+  providerStartDeltaMs?: number | null;
+};
 type Dependencies = {
   accessToken: string; webhookSecret: string; publicUrl: string; allowedOrigins?: string[]; live: boolean;
   reserve: (jwt: string, company: string) => Promise<Checkout>;
@@ -14,6 +18,7 @@ type Dependencies = {
   sync?: (params: Record<string, unknown>) => Promise<boolean>;
   fetch: typeof fetch;
   reportProviderFailure?: (diagnostic: BillingDiagnostic) => void;
+  reportCheckoutFailure?: (diagnostic: CheckoutDiagnostic) => void;
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const resourceId = /^[a-zA-Z0-9_-]{1,100}$/;
@@ -100,33 +105,42 @@ export function createCheckoutHandler(deps: Dependencies) {
     const jwt = req.headers.get('authorization')?.match(/^Bearer (\S+)$/i)?.[1];
     if (!jwt) return reply(401, { error: 'Entre na sua conta.' }, origin);
     if (!deps.accessToken || !deps.webhookSecret) return reply(503, { error: 'Pagamento ainda não configurado.' }, origin);
+    let stage: CheckoutDiagnostic['stage'] = 'request';
+    let providerStartDeltaMs: number | null | undefined;
     try {
       const body = await jsonBody(req);
       if (!uuid.test(body?.empresa_id)) return reply(400, { error: 'Empresa inválida.' }, origin);
       if (body.consultar === true) {
         if (!deps.lookup) throw new Error('Subscription lookup unavailable');
+        stage = 'lookup';
         const saved = await deps.lookup(jwt, body.empresa_id);
         if (!saved?.preapproval_id) return reply(200, { estado: 'sem_checkout' }, origin);
         if (saved.ambiente !== (deps.live ? 'production' : 'test')) return reply(503, { error: 'Pagamentos ainda estão em validação.' }, origin);
+        stage = 'reconcile';
         const estado = await syncSubscription(deps, saved.preapproval_id, saved.id);
         return reply(200, { estado }, origin);
       }
       // reserve validates the JWT and approved manager membership on the server.
+      stage = 'reserve';
       const checkout = await deps.reserve(jwt, body.empresa_id);
+      stage = 'plan';
       if (!uuid.test(checkout.id) || Number(checkout.valor) !== 149.90) throw new Error('Invalid plan');
       if (checkout.ambiente !== (deps.live ? 'production' : 'test')) return reply(503, { error: 'Pagamentos ainda estão em validação. Tente novamente mais tarde.' }, origin);
       if (checkout.url) {
+        stage = 'reconcile';
         const estado = await syncSubscription(deps, String(checkout.preapproval_id), checkout.id);
         if (estado === 'authorized') return reply(200, { estado }, origin);
         if (estado !== 'pending') return reply(409, { error: 'A assinatura foi pausada ou cancelada. Atualize a situação antes de continuar.' }, origin);
         return reply(200, { url: checkoutUrl(checkout.url) }, origin);
       }
       let scheduledStart: string | undefined;
+      stage = 'schedule';
       if (checkout.inicio_cobranca) {
         const start = Date.parse(checkout.inicio_cobranca), serverNow = Date.parse(checkout.servidor_em || '');
         if (!Number.isFinite(start) || !Number.isFinite(serverNow)) throw new Error('Invalid billing schedule');
         if (start > serverNow) scheduledStart = new Date(start).toISOString();
       }
+      stage = 'provider';
       const subscription = await mp(deps, '/preapproval', { method: 'POST',
         headers: { 'X-Idempotency-Key': checkout.id }, body: JSON.stringify({
           reason: 'EntregaCondo · Plano mensal', external_reference: checkout.id, payer_email: checkout.email,
@@ -135,11 +149,21 @@ export function createCheckoutHandler(deps: Dependencies) {
         }),
       });
       if (typeof subscription.id !== 'string' || !resourceId.test(subscription.id)) throw new Error('Invalid subscription');
-      if (scheduledStart && Date.parse(subscription.auto_recurring?.start_date) !== Date.parse(scheduledStart)) throw new Error('Provider did not preserve trial');
+      stage = 'schedule';
+      if (scheduledStart) {
+        const actual = Date.parse(subscription.auto_recurring?.start_date);
+        providerStartDeltaMs = Number.isFinite(actual) ? actual - Date.parse(scheduledStart) : null;
+        if (providerStartDeltaMs !== 0) throw new Error('Provider did not preserve trial');
+      }
+      stage = 'url';
       const url = checkoutUrl(subscription.init_point);
+      stage = 'link';
       if (!await deps.link(checkout.id, String(subscription.id), url)) throw new Error('Checkout changed');
       return reply(200, { url }, origin);
-    } catch { return reply(400, { error: 'Não foi possível preparar o pagamento. Confira seu acesso e tente novamente.' }, origin); }
+    } catch {
+      try { deps.reportCheckoutFailure?.({ stage, ...(stage === 'schedule' && providerStartDeltaMs !== undefined ? { providerStartDeltaMs } : {}) }); } catch { /* Diagnostics cannot affect billing. */ }
+      return reply(400, { error: 'Não foi possível preparar o pagamento. Confira seu acesso e tente novamente.' }, origin);
+    }
   };
 }
 

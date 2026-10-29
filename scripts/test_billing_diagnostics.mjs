@@ -4,11 +4,11 @@ import { createCheckoutHandler } from '../supabase/functions/_shared/subscriptio
 const company = '11111111-1111-1111-1111-111111111111';
 const checkout = 'ab000000-0000-0000-0000-000000000001';
 const request = () => new Request('https://server.test/checkout', {method:'POST',headers:{authorization:'Bearer user-jwt',origin:'https://entregacondo.com.br','content-type':'application/json'},body:JSON.stringify({empresa_id:company})});
-async function run(fetch, report) {
+async function run(fetch, report, extra = {}) {
   let linked = false;
   const handler = createCheckoutHandler({accessToken:'TEST-sensitive',webhookSecret:'private-sensitive',publicUrl:'https://entregacondo.com.br',live:false,
     reserve:async()=>({id:checkout,email:'private-client@example.test',valor:149.90,ambiente:'test'}),
-    fetch, reportProviderFailure: report, link:async()=>{linked=true;return true;},context:async()=>null,record:async()=>true});
+    fetch, reportProviderFailure: report, link:async()=>{linked=true;return true;},context:async()=>null,record:async()=>true,...extra});
   return { response:await handler(request()), linked };
 }
 for (const [status,message,reason] of [
@@ -46,4 +46,30 @@ test('diagnostic logger failure does not change error response',async()=>{
 test('successful checkout does not log provider failure',async()=>{
   const logs=[];const result=await run(async()=>new Response(JSON.stringify({id:'sub-test',init_point:'https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=sub-test'})),d=>logs.push(d));
   assert.equal(result.response.status,200);assert.equal(result.linked,true);assert.deepEqual(logs,[]);
+});
+
+test('checkout diagnostics isolate schedule mismatch without leaking private data',async()=>{
+  for(const [providerDate,delta] of [['2026-11-28T14:51:45.000Z',-334],[null,null]]){
+    const logs=[];
+    const result=await run(async()=>Response.json({id:'sub-test',init_point:'https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=sub-test',auto_recurring:{start_date:providerDate}}),()=>{}, {
+      reserve:async()=>({id:checkout,email:'private-client@example.test',valor:149.90,ambiente:'test',inicio_cobranca:'2026-11-28T14:51:45.334Z',servidor_em:'2026-10-29T14:51:45.334Z'}),
+      reportCheckoutFailure:diagnostic=>logs.push(diagnostic),
+    });
+    assert.equal(result.response.status,400);assert.equal(result.linked,false);
+    assert.deepEqual(logs,[{stage:'schedule',providerStartDeltaMs:delta}]);
+    for(const value of ['private-client@example.test','TEST-sensitive','private-sensitive','user-jwt','2026-11-28'])assert.ok(!JSON.stringify(logs).includes(value));
+  }
+});
+
+test('reservation failures remain generic and diagnostic failure is harmless',async()=>{
+  for(const failLogger of [false,true]){
+    const logs=[];
+    const result=await run(async()=>{throw Error('Provider must not be called');},()=>{}, {
+      reserve:async()=>{throw Error('private-client@example.test user-jwt');},
+      reportCheckoutFailure:diagnostic=>{logs.push(diagnostic);if(failLogger)throw Error('private-sensitive');},
+    });
+    assert.equal(result.response.status,400);assert.equal(result.linked,false);
+    assert.deepEqual(logs,[{stage:'reserve'}]);
+    assert.ok(!(await result.response.text()).includes('private-client@example.test'));
+  }
 });

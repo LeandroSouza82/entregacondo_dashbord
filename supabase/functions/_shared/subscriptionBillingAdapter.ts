@@ -13,6 +13,9 @@ export const billing = {
   reportProviderFailure: (diagnostic: { status: number; reason: string }) => {
     console.error(JSON.stringify({ event: 'mercado_pago_request_rejected', ...diagnostic }));
   },
+  reportCheckoutFailure: (diagnostic: { stage: string; providerStartDeltaMs?: number | null }) => {
+    console.error(JSON.stringify({ event: 'subscription_checkout_failed', ...diagnostic }));
+  },
   lookup: async (jwt: string, company: string) => {
     const publicKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const userClient = createClient(url, publicKey, { global: { headers: { Authorization: 'Bearer ' + jwt } }, auth: { persistSession: false, autoRefreshToken: false } });
