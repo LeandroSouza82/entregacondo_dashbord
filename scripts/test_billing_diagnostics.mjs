@@ -49,7 +49,7 @@ test('successful checkout does not log provider failure',async()=>{
 });
 
 test('checkout diagnostics isolate schedule mismatch without leaking private data',async()=>{
-  for(const [providerDate,delta] of [['2026-11-28T14:51:45.000Z',-334],[null,null]]){
+  for(const [providerDate,delta] of [['2026-11-28T14:51:45.000Z',-1000],[null,null]]){
     const logs=[];
     const result=await run(async()=>Response.json({id:'sub-test',init_point:'https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=sub-test',auto_recurring:{start_date:providerDate}}),()=>{}, {
       reserve:async()=>({id:checkout,email:'private-client@example.test',valor:149.90,ambiente:'test',inicio_cobranca:'2026-11-28T14:51:45.334Z',servidor_em:'2026-10-29T14:51:45.334Z'}),

@@ -43,4 +43,28 @@ status='authorized';const webhook=createSubscriptionWebhook(deps);calls=[];
 assert.equal((await webhook(notification(true))).status,401);assert.equal(calls.length,0);
 assert.equal((await webhook(notification())).status,200);assert.equal(synced.at(-1).p_inicio_cobranca,end);
 assert.equal(synced.at(-1).p_status,'authorized');
+// Real provider timestamps omit fractional seconds. Simulate that behavior and
+// an earlier failed creation cached under the original idempotency key.
+const fractionalEnd='2026-11-28T14:51:45.334Z';
+const roundedEnd='2026-11-28T14:51:46.000Z';
+const cachedOld={id:'sub-old',init_point:'https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=sub-old',auto_recurring:{start_date:'2026-11-28T14:51:45.000Z'}};
+const providerCache=new Map([[id,cachedOld]]);const productionCalls=[];const productionLinks=[];
+const productionHandler=createCheckoutHandler({...deps,live:true,
+ reserve:async()=>({id,email:'buyer@example.test',valor:149.90,ambiente:'production',inicio_cobranca:fractionalEnd,servidor_em:now}),
+ link:async(...args)=>{productionLinks.push(args);return true;},
+ fetch:async(_url,init)=>{
+  const key=init.headers['X-Idempotency-Key'];const body=JSON.parse(init.body);productionCalls.push({key,body});
+  if(!providerCache.has(key))providerCache.set(key,{id:'sub-rounded',init_point:'https://www.mercadopago.com.br/subscriptions/checkout?preapproval_id=sub-rounded',auto_recurring:{...body.auto_recurring,start_date:new Date(Math.floor(Date.parse(body.auto_recurring.start_date)/1000)*1000).toISOString()}});
+  return Response.json(providerCache.get(key));
+ }});
+for(let attempt=0;attempt<2;attempt++){
+ const response=await productionHandler(req({}));assert.equal(response.status,200,'whole-second provider response must preserve the full trial');
+ assert.match((await response.json()).url,/preapproval_id=sub-rounded$/);
+}
+assert.equal(productionCalls[0].body.auto_recurring.start_date,roundedEnd);
+assert.ok(Date.parse(roundedEnd)>=Date.parse(fractionalEnd),'normalization never charges before the original trial end');
+assert.ok(Date.parse(roundedEnd)-Date.parse(fractionalEnd)<1000);
+assert.notEqual(productionCalls[0].key,id,'corrected request cannot reuse the failed fractional schedule');
+assert.equal(productionCalls[0].key,productionCalls[1].key,'retries reuse the same corrected subscription');
+assert.equal(providerCache.size,2);assert.equal(productionLinks.length,2);
 console.log('PASS: early checkout preserves exact trial end; fixed price; status reconciliation; no duplicate subscription; safe return; wrong merchant/company refused; expired trial; signed preapproval without granting paid access. No external API called.');

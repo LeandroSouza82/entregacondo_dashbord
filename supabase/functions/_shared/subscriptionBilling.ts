@@ -134,15 +134,24 @@ export function createCheckoutHandler(deps: Dependencies) {
         return reply(200, { url: checkoutUrl(checkout.url) }, origin);
       }
       let scheduledStart: string | undefined;
+      let idempotencyKey = checkout.id;
       stage = 'schedule';
       if (checkout.inicio_cobranca) {
         const start = Date.parse(checkout.inicio_cobranca), serverNow = Date.parse(checkout.servidor_em || '');
         if (!Number.isFinite(start) || !Number.isFinite(serverNow)) throw new Error('Invalid billing schedule');
-        if (start > serverNow) scheduledStart = new Date(start).toISOString();
+        if (start > serverNow) {
+          // Mercado Pago returns whole seconds. Round upward so its response
+          // cannot schedule a charge before the original trial ends.
+          const wholeSecondStart = Math.ceil(start / 1000) * 1000;
+          scheduledStart = new Date(wholeSecondStart).toISOString();
+          // A previous fractional request may already be cached by the provider.
+          // Keep retries stable without reusing that rejected schedule.
+          if (wholeSecondStart !== start) idempotencyKey += '-' + wholeSecondStart;
+        }
       }
       stage = 'provider';
       const subscription = await mp(deps, '/preapproval', { method: 'POST',
-        headers: { 'X-Idempotency-Key': checkout.id }, body: JSON.stringify({
+        headers: { 'X-Idempotency-Key': idempotencyKey }, body: JSON.stringify({
           reason: 'EntregaCondo · Plano mensal', external_reference: checkout.id, payer_email: checkout.email,
           auto_recurring: { frequency: 1, frequency_type: 'months', transaction_amount: 149.90, currency_id: 'BRL', ...(scheduledStart ? { start_date: scheduledStart } : {}) },
           back_url: returnOrigin + '/#/assinatura', status: 'pending',
