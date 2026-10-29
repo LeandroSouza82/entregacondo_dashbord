@@ -38,7 +38,7 @@ export function AuthEmailActions({ email, onConfirmationRequested }: { email: st
   }
   return <section aria-label="Ajuda para acessar sua conta" className="space-y-2 border-t border-slate-200 pt-4 text-sm">
     <button type="button" onClick={() => void google()} disabled={busy} aria-describedby="google-sign-in-help" className="flex min-h-12 w-full items-center justify-center gap-2.5 rounded-full border border-[#747775] bg-white px-3 py-3 text-sm font-medium text-[#1f1f1f] transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-50" style={{ fontFamily: '"Google Sans", Arial, sans-serif' }}>
-      <img src="/brand/google-g.png" alt="" aria-hidden="true" width={20} height={20} className="h-5 w-5 shrink-0" />
+      <img src="/brand/google-g.png" alt="" aria-hidden="true" width={20} height={20} className="h-5 w-5 shrink-0 object-contain" />
       <span>Entrar com Google</span>
     </button>
     <p id="google-sign-in-help" className="text-xs leading-relaxed text-slate-600">Clique no botão para escolher sua conta Google e entrar no EntregaCondo. Não é preciso preencher e-mail ou senha nos campos acima. Se já usava Google, escolha a mesma conta.</p>
