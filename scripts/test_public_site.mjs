@@ -14,7 +14,7 @@ const server=http.createServer((req,res)=>{
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 let browser;
 try{
- browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ browser=await puppeteer.launch({executablePath:process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const base='http://127.0.0.1:'+server.address().port;
  for(const width of [320,390,1440]){
   await page.setViewport({width,height:900});await page.goto(base);await page.waitForSelector('h1');
@@ -24,7 +24,7 @@ try{
   assert.equal(await page.$eval('meta[name=robots]',e=>e.content),'index,follow');
   const structured=await page.$eval('script[type="application/ld+json"]',e=>JSON.parse(e.textContent));assert.equal(structured['@graph'][1].name,'EntregaCondo');
   assert.equal(await page.$$eval('a[href*="dashboard."]',links=>links.every(a=>a.href.startsWith('https://dashboard.entregacondo.com.br/#/'))),true);
-  await page.screenshot({path:'../../outputs/site-entregacondo-'+width+'.png',fullPage:true});
+  if(process.env.SITE_SCREENSHOT_DIR)await page.screenshot({path:path.join(process.env.SITE_SCREENSHOT_DIR,'site-entregacondo-'+width+'.png'),fullPage:true});
   for(const route of ['/privacidade','/termos']){await page.goto(base+route);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.match(await page.$eval('main',e=>e.innerText),/Fast Leituras/);}
  }
  const script=fs.readFileSync('public/site/legacy-access.js','utf8');
@@ -32,7 +32,8 @@ try{
   let target;vm.runInNewContext(script,{URLSearchParams,window:{location:{search,hash,replace:value=>target=value},history:{replaceState(){}}}});
   assert.equal(Boolean(target),expected);if(expected)assert.equal(target,'https://dashboard.entregacondo.com.br/'+search+hash);
  }
- // Render a share card from the project's own vector mark; no external media.
- await page.setViewport({width:1200,height:630});await page.goto(base);await page.setContent('<html><body style="margin:0;background:#101d30;color:#fff;font-family:Arial"><div style="padding:80px"><div style="display:flex;align-items:center;gap:22px;font-size:38px;font-weight:bold"><img width="64" height="64" src="'+base+'/site/assets/mark.svg">EntregaCondo</div><h1 style="font-size:76px;line-height:1.08;letter-spacing:-3px;margin:55px 0 24px">Cada entrega,<br><span style="color:#ffad7b">no lugar certo.</span></h1><p style="font-size:23px;color:#c3ceda">Entregas · Coletas · Rotas · Comprovantes</p><p style="font-size:17px;color:#c3ceda">entregacondo.com.br</p></div></body></html>');await page.waitForFunction(()=>Array.from(document.images).every(i=>i.complete));await page.screenshot({path:'public/site/social.png'});
+ // Verify the committed share card without regenerating a production asset during tests.
+ await page.goto(base+'/site/social.png');
+ await page.waitForFunction(()=>Array.from(document.images).every(i=>i.complete&&i.naturalWidth>0));
  assert.deepEqual(errors,[]);console.log('PASS: static crawlable site, mobile/desktop, images, metadata, links, legal pages and legacy auth/public-link preservation.');
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
