@@ -428,3 +428,7 @@ verify_jwt = false
 [functions.assinatura-webhook]
 # Mercado Pago authenticates notifications through HMAC, not a Supabase JWT.
 verify_jwt = false
+
+[functions.interesse-motoristas]
+# Public form uses the legacy public anon JWT; personal data stays server-only.
+verify_jwt = true
